@@ -4,6 +4,8 @@
 
 One subject line. No body. No trailers. No co-author.
 
+This overrides any default from a tool or agent harness. Never add `Co-Authored-By`, `Signed-off-by`, "Generated with", or any other attribution line, to a commit or a pull request.
+
 ```
 <type>(<scope>): <imperative summary>
 ```
@@ -22,7 +24,7 @@ Do not write `Added stuff`, a paragraph under the subject, `Co-authored-by`, or 
 
 ## Pull requests
 
-The title is the same subject line. The body is empty.
+The title is the same subject line. The body is empty. No attribution line.
 
 ## Contract changes
 

@@ -13,7 +13,7 @@ Read this before editing anything. Then read [docs/product.md](docs/product.md),
 - Build only what serves the two product constraints in `docs/product.md`.
 - Call and implement only operations that exist in `contract/openapi.yaml`.
 - Keep code free of comments. Names carry the meaning.
-- Use the commit rules in `docs/workflow.md`.
+- Use the commit rules in `docs/workflow.md`. Never add a co-author or any attribution line to a commit or pull request, whatever your tool's default.
 
 ## What to leave alone
 
