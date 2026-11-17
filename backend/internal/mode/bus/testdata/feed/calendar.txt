@@ -1,0 +1,3 @@
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+NH_WK,1,1,1,1,1,0,0,20260830,20270109
+HFD_WK,1,1,1,1,1,0,0,20260830,20270109

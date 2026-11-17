@@ -1,0 +1,15 @@
+[
+  {"catId": 52707, "id": 560119, "name": "Watson Hall", "lat": 41.313107, "lng": -72.92485, "locationType": "standard", "shape": {"type": "polygon", "paths": [[41.31300, -72.92496], [41.31320, -72.92470]]}},
+  {"catId": 52707, "id": 559919, "name": "Watson Center", "lat": 41.315616, "lng": -72.923559, "locationType": "standard", "shape": {"type": "polygon"}},
+  {"catId": 52707, "id": 560127, "name": "W. L. Harkness Hall", "lat": 41.310683, "lng": -72.926997, "locationType": "standard", "shape": {"type": "polygon"}},
+  {"catId": 52707, "id": 560111, "name": "Linsly-Chittenden Hall", "lat": 41.30866, "lng": -72.92902, "locationType": "standard", "shape": {"type": "polygon"}},
+  {"catId": 52707, "id": 563698, "name": "Sterling Memorial Library", "lat": 41.31118, "lng": -72.92902, "locationType": "standard", "shape": {"type": "polygon"}},
+  {"catId": 60001, "id": 860764, "name": "Sterling Memorial Library", "lat": 41.31120, "lng": -72.92900, "locationType": "standard", "shape": null},
+  {"catId": 104718, "id": 1148228, "name": "Silliman College", "lat": 41.310879, "lng": -72.924889, "locationType": "standard", "shape": null},
+  {"catId": 58223, "id": 592139, "name": "Watson Hall entrance", "lat": 41.31318, "lng": -72.92470, "locationType": "standard", "shape": null},
+  {"catId": 58224, "id": 592140, "name": "Watson Hall, Hillhouse Avenue entrance", "lat": 41.31300, "lng": -72.92510, "locationType": "standard", "shape": null},
+  {"catId": 58223, "id": 592129, "name": "Watson Center entrance", "lat": 41.31560, "lng": -72.92350, "locationType": "standard", "shape": null},
+  {"catId": 58223, "id": 592242, "name": "Sterling Memorial Library, 301 York Street entrance", "lat": 41.31150, "lng": -72.92950, "locationType": "standard", "shape": null},
+  {"catId": 58223, "id": 592243, "name": "Sterling Memorial Library, main entrance", "lat": 41.31095, "lng": -72.92880, "locationType": "standard", "shape": null},
+  {"catId": 58223, "id": 592251, "name": "Linsly-Chittenden Hall main entrance", "lat": 41.30872, "lng": -72.92890, "locationType": "standard", "shape": null}
+]

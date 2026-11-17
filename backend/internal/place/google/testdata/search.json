@@ -1,0 +1,7 @@
+{
+  "places": [
+    {"id": "ChIJmamoun", "displayName": {"text": "Atticus Bookstore Cafe", "languageCode": "en"}, "formattedAddress": "1082 Chapel St, New Haven, CT 06510, USA", "location": {"latitude": 41.30829, "longitude": -72.93056}},
+    {"id": "ChIJsecond", "displayName": {"text": "Atticus Market", "languageCode": "en"}, "formattedAddress": "1 Mill River St, New Haven, CT 06511, USA", "location": {"latitude": 41.3148, "longitude": -72.9129}},
+    {"id": "ChIJthird", "displayName": {"text": "Book Trader Cafe", "languageCode": "en"}, "formattedAddress": "1140 Chapel St, New Haven, CT 06511, USA", "location": {"latitude": 41.3079, "longitude": -72.9327}}
+  ]
+}

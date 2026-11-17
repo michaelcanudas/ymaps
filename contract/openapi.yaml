@@ -1,11 +1,15 @@
 openapi: 3.0.3
 info:
   title: ymaps
-  version: 0.1.0
+  version: 0.2.0
   description: |
     The only interface between the ymaps backend and its frontends.
     The server implements this file. Clients call only these operations.
     Product intent that is not listed here is not an API.
+
+    Times are RFC 3339. Coordinates are WGS84 decimal degrees.
+    A path is a Google encoded polyline at precision 5.
+    Costs are US cents.
 servers:
   - url: http://localhost:8080
 paths:
@@ -20,6 +24,74 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HelloResponse"
+  /v1/routes:
+    post:
+      operationId: planRoute
+      summary: Resolve a destination and return the best route there.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteRequest"
+      responses:
+        "200":
+          description: The best route to the resolved place.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Route"
+        "400":
+          description: The request body is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: |
+            The destination did not resolve to one place.
+            An empty `places` means nothing matched. Otherwise the student picks one and the client retries with its `placeId`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Unresolved"
+  /v1/routes/{routeId}:
+    get:
+      operationId: refreshRoute
+      summary: Score the route again from where the student is now.
+      description: |
+        Returns the same route with fresh times, or a better route under the same id.
+      parameters:
+        - name: routeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+        - name: lon
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+      responses:
+        "200":
+          description: The current best route.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Route"
+        "404":
+          description: The route is unknown or has expired. Plan a new one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
     HelloResponse:
@@ -32,3 +104,398 @@ components:
           type: string
           enum:
             - hello
+    Coordinate:
+      type: object
+      additionalProperties: false
+      required:
+        - lat
+        - lon
+      properties:
+        lat:
+          type: number
+          format: double
+        lon:
+          type: number
+          format: double
+    RouteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - origin
+        - destination
+      properties:
+        origin:
+          $ref: "#/components/schemas/Coordinate"
+        destination:
+          type: string
+          description: What the student said or typed.
+          minLength: 1
+        placeId:
+          type: string
+          description: A place the student picked from a 422 response. Overrides `destination`.
+    Place:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - coordinate
+        - source
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        entryway:
+          $ref: "#/components/schemas/Entryway"
+        source:
+          type: string
+          enum:
+            - alias
+            - yale
+            - google
+    Entryway:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - coordinate
+      properties:
+        name:
+          type: string
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+    Unresolved:
+      type: object
+      additionalProperties: false
+      required:
+        - destination
+        - places
+      properties:
+        destination:
+          type: string
+        places:
+          type: array
+          items:
+            $ref: "#/components/schemas/Place"
+    Route:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - place
+        - computedAt
+        - departAt
+        - arriveAt
+        - arriveAtLate
+        - costCents
+        - legs
+      properties:
+        id:
+          type: string
+        place:
+          $ref: "#/components/schemas/Place"
+        computedAt:
+          type: string
+          format: date-time
+        departAt:
+          type: string
+          format: date-time
+        arriveAt:
+          type: string
+          format: date-time
+          description: Typical arrival.
+        arriveAtLate:
+          type: string
+          format: date-time
+          description: Arrival on a bad day, the 90th percentile.
+        costCents:
+          type: integer
+        legs:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Leg"
+    Point:
+      type: object
+      additionalProperties: false
+      required:
+        - coordinate
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+    Line:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - color
+        - path
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+          description: Hex RGB without `#`.
+          pattern: "^[0-9A-Fa-f]{6}$"
+        path:
+          type: string
+          description: The whole line, for drawing faintly behind the leg.
+    Vehicle:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - coordinate
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        heading:
+          type: integer
+          description: Degrees clockwise from north.
+    Leg:
+      oneOf:
+        - $ref: "#/components/schemas/WalkLeg"
+        - $ref: "#/components/schemas/ShuttleLeg"
+        - $ref: "#/components/schemas/BusLeg"
+        - $ref: "#/components/schemas/BikeLeg"
+        - $ref: "#/components/schemas/VeoLeg"
+      discriminator:
+        propertyName: mode
+        mapping:
+          walk: "#/components/schemas/WalkLeg"
+          shuttle: "#/components/schemas/ShuttleLeg"
+          bus: "#/components/schemas/BusLeg"
+          bike: "#/components/schemas/BikeLeg"
+          veo: "#/components/schemas/VeoLeg"
+    WalkLeg:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - from
+        - to
+        - departAt
+        - arriveAt
+        - arriveAtLate
+        - costCents
+        - path
+      properties:
+        mode:
+          type: string
+          enum:
+            - walk
+        from:
+          $ref: "#/components/schemas/Point"
+        to:
+          $ref: "#/components/schemas/Point"
+        departAt:
+          type: string
+          format: date-time
+        arriveAt:
+          type: string
+          format: date-time
+        arriveAtLate:
+          type: string
+          format: date-time
+        costCents:
+          type: integer
+        path:
+          type: string
+    ShuttleLeg:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - from
+        - to
+        - departAt
+        - arriveAt
+        - arriveAtLate
+        - costCents
+        - path
+        - line
+        - stopCount
+      properties:
+        mode:
+          type: string
+          enum:
+            - shuttle
+        from:
+          $ref: "#/components/schemas/Point"
+        to:
+          $ref: "#/components/schemas/Point"
+        departAt:
+          type: string
+          format: date-time
+          description: When the shuttle leaves the boarding stop.
+        arriveAt:
+          type: string
+          format: date-time
+        arriveAtLate:
+          type: string
+          format: date-time
+        costCents:
+          type: integer
+        path:
+          type: string
+        line:
+          $ref: "#/components/schemas/Line"
+        stopCount:
+          type: integer
+        vehicle:
+          $ref: "#/components/schemas/Vehicle"
+    BusLeg:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - from
+        - to
+        - departAt
+        - arriveAt
+        - arriveAtLate
+        - costCents
+        - path
+        - line
+        - headsign
+        - stopCount
+      properties:
+        mode:
+          type: string
+          enum:
+            - bus
+        from:
+          $ref: "#/components/schemas/Point"
+        to:
+          $ref: "#/components/schemas/Point"
+        departAt:
+          type: string
+          format: date-time
+          description: When the bus leaves the boarding stop.
+        arriveAt:
+          type: string
+          format: date-time
+        arriveAtLate:
+          type: string
+          format: date-time
+        costCents:
+          type: integer
+        path:
+          type: string
+        line:
+          $ref: "#/components/schemas/Line"
+        headsign:
+          type: string
+        stopCount:
+          type: integer
+        vehicle:
+          $ref: "#/components/schemas/Vehicle"
+    BikeLeg:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - from
+        - to
+        - departAt
+        - arriveAt
+        - arriveAtLate
+        - costCents
+        - path
+      properties:
+        mode:
+          type: string
+          enum:
+            - bike
+        from:
+          $ref: "#/components/schemas/Point"
+          description: The station or bike where the ride starts.
+        to:
+          $ref: "#/components/schemas/Point"
+          description: The station where the bike is returned.
+        departAt:
+          type: string
+          format: date-time
+        arriveAt:
+          type: string
+          format: date-time
+        arriveAtLate:
+          type: string
+          format: date-time
+        costCents:
+          type: integer
+        path:
+          type: string
+        bikesAvailable:
+          type: integer
+    VeoLeg:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - from
+        - to
+        - departAt
+        - arriveAt
+        - arriveAtLate
+        - costCents
+        - path
+        - vehicle
+        - form
+      properties:
+        mode:
+          type: string
+          enum:
+            - veo
+        from:
+          $ref: "#/components/schemas/Point"
+        to:
+          $ref: "#/components/schemas/Point"
+          description: The drop-off spot.
+        departAt:
+          type: string
+          format: date-time
+        arriveAt:
+          type: string
+          format: date-time
+        arriveAtLate:
+          type: string
+          format: date-time
+        costCents:
+          type: integer
+        path:
+          type: string
+        vehicle:
+          $ref: "#/components/schemas/Vehicle"
+        form:
+          type: string
+          enum:
+            - scooter
+            - bike
+        rentalUri:
+          type: string
+          description: Opens the Veo app on this vehicle.
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+      properties:
+        message:
+          type: string

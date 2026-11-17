@@ -1,0 +1,2 @@
+service_id,date,exception_type
+NH_WK,20261126,2

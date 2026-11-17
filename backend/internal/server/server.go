@@ -9,13 +9,17 @@ type HelloResponse struct {
 	Message string `json:"message"`
 }
 
-func Listen(address string) error {
-	return http.ListenAndServe(address, Handler())
+func Listen(address string, routes *Routes) error {
+	return http.ListenAndServe(address, Handler(routes))
 }
 
-func Handler() http.Handler {
+func Handler(routes *Routes) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/hello", writeHello)
+	if routes != nil {
+		mux.HandleFunc("POST /v1/routes", routes.plan)
+		mux.HandleFunc("GET /v1/routes/{routeId}", routes.refresh)
+	}
 	return withCORS(mux)
 }
 

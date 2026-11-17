@@ -29,9 +29,26 @@ Browsers may send an `OPTIONS` preflight. The server answers `204` so a local cl
 Go module: `ymaps/backend`.
 
 ```sh
-cd backend
-go run ./cmd/ymaps
-go test ./...
+cd backend/valhalla && docker compose up -d
+cd backend && go run ./cmd/ymaps
+cd backend && go test ./...
 ```
 
-The current operation is `GET /v1/hello`.
+The first Valhalla start downloads the Connecticut extract and builds tiles, about five minutes. Later starts reuse `backend/valhalla/custom_files/`.
+
+The server reads `.env` at the repo root.
+
+| Variable | Needed for | Without it |
+| --- | --- | --- |
+| `RIDE_NEW_HAVEN_GBFS_KEY` | bike legs | no bike legs |
+| `YALE_MAP_KEY` | Yale buildings, abbreviations, course locations, entrances | only our own aliases resolve |
+| `GOOGLE_MAPS_KEY` | stores, addresses, anything off campus | those destinations return `422` |
+| `VALHALLA_URL` | street paths and times, e.g. `http://localhost:8002` | straight lines at an estimated detour |
+| `PORT` | listen port | `8080` |
+
+The operations are `GET /v1/hello`, `POST /v1/routes`, and `GET /v1/routes/{routeId}`. How the backend plans a route is in [routing.md](routing.md).
+
+```sh
+curl -s -X POST localhost:8080/v1/routes -H 'Content-Type: application/json' \
+  -d '{"origin":{"lat":41.2987,"lon":-72.9293},"destination":"Kline Tower"}'
+```

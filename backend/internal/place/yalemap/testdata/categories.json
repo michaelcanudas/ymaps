@@ -1,0 +1,9 @@
+[
+  {"catId": 52707, "name": "Buildings", "parent": 0},
+  {"catId": 58222, "name": "Building Entrances", "parent": 0},
+  {"catId": 58223, "name": "Accessible Entrances", "parent": 58222},
+  {"catId": 58224, "name": "Inaccessible Entrances", "parent": 58222},
+  {"catId": 63596, "name": "Dining", "parent": 0},
+  {"catId": 104718, "name": "Residential Dining", "parent": 63596},
+  {"catId": 60001, "name": "Libraries", "parent": 0}
+]

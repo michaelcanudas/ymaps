@@ -1,0 +1,20 @@
+services:
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    container_name: ymaps-valhalla
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./custom_files:/custom_files
+    environment:
+      - tile_urls=https://download.geofabrik.de/north-america/us/connecticut-latest.osm.pbf
+      - use_tiles_ignore_pbf=True
+      - force_rebuild=False
+      - build_admins=True
+      - build_time_zones=True
+      - build_elevation=False
+      - build_transit=False
+      - build_tar=True
+      - serve_tiles=True
+      - server_threads=4
+    restart: unless-stopped

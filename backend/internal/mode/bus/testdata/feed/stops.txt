@@ -1,0 +1,7 @@
+stop_id,stop_code,stop_name,stop_lat,stop_lon,zone_id,stop_url,location_type,parent_station,stop_timezone,wheelchair_boarding
+A,,Chapel St @ College St,41.300000,-72.930000,,,,,,0
+B,,College St @ Elm St,41.305000,-72.930000,,,,,,0
+C,,Whitney Ave @ Grove St,41.310000,-72.930000,,,,,,0
+D,,Whitney Ave @ Sachem St,41.315000,-72.930000,,,,,,0
+H,,Main St @ Atheneum Sq,41.764790,-72.673550,,,,,,0
+X,,Unused Stop,41.300100,-72.930100,,,,,,0

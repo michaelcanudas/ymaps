@@ -1,0 +1,4 @@
+route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_url,route_color,route_text_color
+16462,1,101,HARTFORD/NEW BRITAIN,,3,,8CC63F,FFFFFF
+16212,2,212,GRAND AVE,,3,,,FFFFFF
+16228,2,228,WHITNEY AVE,,3,,3535FF,FFFFFF

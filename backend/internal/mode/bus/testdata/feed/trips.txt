@@ -1,0 +1,5 @@
+﻿trip_id,route_id,service_id,trip_headsign,trip_short_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed
+T1,16228,NH_WK,228 - Hamden Plaza,,0,1,S1,0,0
+T2,16228,NH_WK,228 - Hamden Plaza,,0,1,S2,0,0
+LATE,16212,NH_WK,212 - Grand Ave,,0,2,S1,0,0
+H1,16462,HFD_WK,101 - New Britain,,0,3,SH,0,0
