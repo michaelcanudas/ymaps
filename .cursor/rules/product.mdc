@@ -1,0 +1,14 @@
+---
+description: The two product constraints that decide what ships
+alwaysApply: true
+---
+
+# Product
+
+ymaps has two constraints: the optimal route, and the fastest time to get it. Read `docs/product.md`.
+
+Ship a change only when it improves the route or shortens the time to receive it. Drop everything else.
+
+Route decisions, alias resolution, shuttle prediction, and rerouting belong on the server. The client collects the destination and presents the route.
+
+Any model, speech, ranking, or generated language uses a Grok product.

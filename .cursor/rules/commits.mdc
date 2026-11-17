@@ -1,0 +1,19 @@
+---
+description: Semantic commit subjects with an empty body
+alwaysApply: true
+---
+
+# Commits and pull requests
+
+Subject only. No body. No trailers. No co-author line.
+
+```
+feat(backend): add hello response
+fix(contract): reject unknown hello fields
+docs: define the two product constraints
+```
+
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
+Scopes: `backend`, `frontend`, `contract`, or omit the scope for a repo-wide change.
+
+A pull request title is that subject. The pull request body is empty.

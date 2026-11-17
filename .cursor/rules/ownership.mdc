@@ -1,0 +1,11 @@
+---
+description: Backend, frontend, and contract ownership
+alwaysApply: true
+---
+
+# Ownership
+
+- `backend/` is Michael's. Walter's agents do not modify it.
+- `frontend/` is Walter's. Michael's agents do not modify it.
+- `contract/openapi.yaml` is the only interface. Implement and call only the operations in that file.
+- A behavior change updates the OpenAPI file in the same change as the code.

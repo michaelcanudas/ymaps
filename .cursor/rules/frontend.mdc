@@ -1,0 +1,15 @@
+---
+description: Frontend contract and surface rules
+globs: frontend/**/*
+alwaysApply: false
+---
+
+# Frontend
+
+Read `docs/frontend.md` and `contract/openapi.yaml`.
+
+Call only documented operations. Send the destination to the server. Do not rank modes or resolve aliases on the device.
+
+Surfaces to keep: the app, Siri, the widget, the top black bar, and hold to talk.
+
+No comments.

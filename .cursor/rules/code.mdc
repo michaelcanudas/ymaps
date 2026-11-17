@@ -1,0 +1,18 @@
+---
+description: Code has no comments
+alwaysApply: true
+---
+
+# Code
+
+Write no comments. Choose names that make the comment unnecessary.
+
+```go
+func listenAddress() string {
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080"
+    }
+    return ":" + port
+}
+```

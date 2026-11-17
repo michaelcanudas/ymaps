@@ -1,0 +1,13 @@
+---
+description: Go backend conventions
+globs: backend/**/*.go
+alwaysApply: false
+---
+
+# Backend
+
+Go, standard library `net/http`. Put the process in `cmd/ymaps` and the HTTP surface in `internal/server`.
+
+Every product route exists in `contract/openapi.yaml` and matches that schema. Do not add a route the file does not list.
+
+No comments.

@@ -1,0 +1,6 @@
+.DS_Store
+.env
+backend/bin/
+frontend/node_modules/
+frontend/dist/
+frontend/.expo/
