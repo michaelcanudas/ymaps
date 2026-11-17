@@ -1,6 +1,6 @@
 # Agents
 
-Read this before editing anything. Then read [docs/product.md](docs/product.md), [docs/architecture.md](docs/architecture.md), and [docs/workflow.md](docs/workflow.md).
+Read this before editing anything. Then read [docs/product.md](docs/product.md), [docs/architecture.md](docs/architecture.md), [docs/workflow.md](docs/workflow.md), and, for backend work, [docs/routing.md](docs/routing.md).
 
 ## Who owns what
 
