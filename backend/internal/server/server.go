@@ -1,0 +1,43 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+type HelloResponse struct {
+	Message string `json:"message"`
+}
+
+func Listen(address string) error {
+	return http.ListenAndServe(address, Handler())
+}
+
+func Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/hello", writeHello)
+	return withCORS(mux)
+}
+
+func writeHello(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, HelloResponse{Message: "hello"})
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		if request.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, request)
+	})
+}
