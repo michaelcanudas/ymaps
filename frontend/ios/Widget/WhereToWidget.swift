@@ -24,17 +24,23 @@ struct WhereToWidgetView: View {
         VStack(alignment: .leading) {
             Text("ymaps")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(Brand.textFaint)
             Spacer()
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Brand.textPrimary)
+                    .frame(width: 8, height: 8)
                 Text("Where to?")
                     .font(.headline)
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(Brand.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Brand.raised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .containerBackground(.black, for: .widget)
+        .containerBackground(Brand.ink, for: .widget)
         .widgetURL(URL(string: "ymaps://search"))
     }
 }

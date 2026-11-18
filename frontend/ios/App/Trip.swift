@@ -107,7 +107,8 @@ final class Trip: NSObject, CLLocationManagerDelegate {
         let state = DestinationActivityAttributes.ContentState(
             arriveAt: route.arriveAt,
             step: Trip.instruction(for: next),
-            symbol: ModeSymbol.name(for: next.mode)
+            symbol: ModeSymbol.name(for: next.mode),
+            mode: next.mode
         )
         return ActivityContent(state: state, staleDate: route.arriveAt.addingTimeInterval(600))
     }

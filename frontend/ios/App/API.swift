@@ -40,6 +40,7 @@ struct Vehicle: Codable, Hashable {
     let id: String
     let name: String?
     let coordinate: Coordinate
+    let heading: Double?
 }
 
 struct Leg: Codable, Hashable {
