@@ -101,6 +101,27 @@ Plan:
 
 Confirm over a full day that `bike_id` does not rotate after a trip. GBFS recommends rotating it.
 
+## Learned spots
+
+`internal/veospots` learns drop-off spots from the live feed and hands them to `gbfs.NewVeo` as its `SpotSource`. Learned spots replace the single-snapshot clusters once any qualify.
+
+Method:
+
+1. Every 30 s, read the Veo reader's latest snapshot. Key each vehicle by the `number` in `rental_uris.ios`, since `bike_id` may rotate.
+2. Keep each vehicle's resting position. A trip end is a vehicle that is next seen more than 150 m from that position and then stays within 30 m for 2 polls. It does not count if it was away more than 3 hours, or if its `current_range_meters` rose by more than 1 km, since both point to staff charging or rebalancing rather than a ride.
+3. Group trip ends within 30 m into spots, with a running centroid, a count, and a last-seen time. A spot with 3 or more trip ends qualifies.
+4. Until 10 spots qualify, use resting vehicles instead: a vehicle that stays within 30 m for 10 minutes adds one rest to a 30 m group, and a group with 3 or more rests qualifies.
+5. Drop any group that ever held more than 30 vehicles at once (the depot), groups not seen for 30 days, and groups that never qualified within 7 days. Tracks, groups, and the recent trip end list are capped.
+
+State is saved as JSON every 5 minutes and on shutdown, to `VEO_SPOTS_PATH` (default `./data/veo_spots.json`), and loaded on start. On Railway, point it at a mounted volume.
+
+Debug views, served only when `YMAPS_DEBUG=1`. They are not product operations and are not in the contract.
+
+- `GET /debug/veo/spots`: the active source (`tripEnds`, `rests`, or `none`), every group with `lat`, `lon`, `tripEnds` or `rests`, `peakVehicles`, `qualified`, `lastSeen`, and the most recent trip ends.
+- `GET /debug/veo/spots.geojson`: the same as a `FeatureCollection` of points, with `kind` set to `tripEndSpot`, `restSpot`, or `tripEnd`.
+
+A public dataset of station locations was looked for again on 2026-11-17 and none was found.
+
 ## Live behavior
 
 Seen on 2026-11-17:

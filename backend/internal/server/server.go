@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 )
 
 type HelloResponse struct {
@@ -19,6 +20,9 @@ func Handler(routes *Routes) http.Handler {
 	if routes != nil {
 		mux.HandleFunc("POST /v1/routes", routes.plan)
 		mux.HandleFunc("GET /v1/routes/{routeId}", routes.refresh)
+		if routes.Debug != nil && os.Getenv("YMAPS_DEBUG") == "1" {
+			mux.Handle("GET /debug/", routes.Debug)
+		}
 	}
 	return withCORS(mux)
 }

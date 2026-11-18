@@ -28,3 +28,22 @@ func TestSayHello(t *testing.T) {
 		t.Fatalf("message %q", body.Message)
 	}
 }
+
+func TestDebugRoutesNeedDebugFlag(t *testing.T) {
+	debug := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	routes := &Routes{Debug: debug}
+	status := func() int {
+		response := httptest.NewRecorder()
+		Handler(routes).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/debug/veo/spots", nil))
+		return response.Code
+	}
+
+	t.Setenv("YMAPS_DEBUG", "")
+	if code := status(); code != http.StatusNotFound {
+		t.Fatalf("without flag: status %d", code)
+	}
+	t.Setenv("YMAPS_DEBUG", "1")
+	if code := status(); code != http.StatusTeapot {
+		t.Fatalf("with flag: status %d", code)
+	}
+}

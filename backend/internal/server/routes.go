@@ -29,6 +29,7 @@ type Planner interface {
 type Routes struct {
 	Places  Places
 	Planner Planner
+	Debug   http.Handler
 	Now     func() time.Time
 	store   routeStore
 }

@@ -19,6 +19,7 @@ import (
 	"ymaps/backend/internal/server"
 	"ymaps/backend/internal/streets"
 	"ymaps/backend/internal/streets/valhalla"
+	"ymaps/backend/internal/veospots"
 )
 
 func main() {
@@ -44,6 +45,9 @@ func main() {
 		google.New(os.Getenv("GOOGLE_MAPS_KEY")),
 	}
 
+	veoSpots := veospots.New(os.Getenv("VEO_SPOTS_PATH"))
+	veo := gbfs.NewVeo(veoSpots)
+
 	planner := plan.Planner{
 		Streets:     roads,
 		ModeTimeout: 3 * time.Second,
@@ -51,12 +55,13 @@ func main() {
 			shuttle.New(),
 			bus.New(),
 			gbfs.NewBike(os.Getenv("RIDE_NEW_HAVEN_GBFS_KEY")),
-			gbfs.NewVeo(nil),
+			veo,
 		},
 	}
 	planner.Run(ctx)
+	go veoSpots.Run(ctx, veo.Reader())
 
-	routes := &server.Routes{Places: places, Planner: planner}
+	routes := &server.Routes{Places: places, Planner: planner, Debug: veoSpots.DebugHandler()}
 	log.Fatal(server.Listen(listenAddress(), routes))
 }
 
