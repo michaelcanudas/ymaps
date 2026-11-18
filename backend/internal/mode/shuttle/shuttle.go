@@ -29,11 +29,12 @@ const (
 	requestETAWait   = 1500 * time.Millisecond
 )
 
-var downtownerBias = []time.Duration{0, 0, 0, 0, 0}
+var downtownerBias = []time.Duration{45 * time.Second, 30 * time.Second, -20 * time.Second, 0, 0}
 
 type stopETAs struct {
 	fetchedAt time.Time
 	byBus     map[int]time.Time
+	routes    map[int]int
 }
 
 type snapshot struct {
@@ -181,12 +182,14 @@ func (m *Mode) pollStopETAs(ctx context.Context, stopID int) error {
 	fetchedAt := m.now()
 	m.update(func(next *snapshot) {
 		previous, known := next.etas[stopID]
-		entry := stopETAs{fetchedAt: fetchedAt, byBus: previous.byBus}
+		entry := stopETAs{fetchedAt: fetchedAt, byBus: previous.byBus, routes: previous.routes}
 		if changed || !known {
 			entry.byBus = arrivals(response, stopID)
+			routes := busRoutes(response, stopID)
+			entry.routes = routes
 			calculatedAt := time.Unix(response.CalculationTime, 0)
 			for busID, at := range entry.byBus {
-				m.accuracy.Predicted(busID, stopID, calculatedAt, at)
+				m.accuracy.Predicted(routes[busID], busID, stopID, calculatedAt, at)
 			}
 		}
 		next.etas = maps.Clone(next.etas)
@@ -196,6 +199,14 @@ func (m *Mode) pollStopETAs(ctx context.Context, stopID int) error {
 		next.etas[stopID] = entry
 	})
 	return nil
+}
+
+func busRoutes(response etaResponse, stopID int) map[int]int {
+	routes := map[int]int{}
+	for _, e := range response.Etas[strconv.Itoa(stopID)].Etas {
+		routes[e.BusID] = e.Route
+	}
+	return routes
 }
 
 func arrivals(response etaResponse, stopID int) map[int]time.Time {
@@ -269,7 +280,7 @@ func (s *snapshot) lookup(now time.Time, accuracy *Accuracy) etaLookup {
 		if !ok {
 			return time.Time{}, false
 		}
-		return at.Add(accuracy.Correction(at.Sub(entry.fetchedAt))), true
+		return at.Add(accuracy.Correction(entry.routes[busID], at.Sub(entry.fetchedAt))), true
 	}
 }
 

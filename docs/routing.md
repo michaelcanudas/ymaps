@@ -140,7 +140,9 @@ Every time is an estimate; there is no late percentile.
 
 ### Shuttle accuracy
 
-Every ETA poll records the predicted arrival per bus and stop. When a bus's `lastStop` changes, the predictions for that stop are scored against the time the bus passed it, bucketed by how far ahead they were made. The correction per bucket starts at a measured prior and moves to the running mean as observations arrive.
+Every ETA poll records the predicted arrival per bus and stop. When a bus's `lastStop` changes, the predictions for that stop are scored against the time the bus passed it, bucketed by how far ahead they were made. The correction per line and bucket starts at a measured prior and moves to the running mean as observations arrive.
+
+The prior comes from 24 minutes of logged night service (189 scored predictions, Nov 17 2026): `lastStop` flips about when the bus leaves the stop, `avg` behaves like whole minutes rounded down, and buses passed 45 s later than predicted at under 3 minutes ahead, 30 s later at 3–5, and 20 s earlier at 6–10. Further out the error spread (±5 minutes) hides any bias, so the prior is 0. Blue Night ran about 100 s late at every horizon while the Orange lines ran early, which is why the learned correction is per line. The spread is wider than any correction, so the estimate stays an estimate.
 
 ## Rerouting
 

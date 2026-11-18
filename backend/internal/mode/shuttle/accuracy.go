@@ -19,8 +19,14 @@ func bucketOf(ahead time.Duration) horizonBucket {
 }
 
 type prediction struct {
+	route  int
 	madeAt time.Time
 	at     time.Time
+}
+
+type statsKey struct {
+	route  int
+	bucket horizonBucket
 }
 
 type arrivalKey struct {
@@ -45,7 +51,7 @@ type Accuracy struct {
 	mutex       sync.Mutex
 	prior       []time.Duration
 	predictions map[arrivalKey][]prediction
-	stats       []errorStats
+	stats       map[statsKey]errorStats
 	lastStop    map[int]int
 }
 
@@ -53,12 +59,12 @@ func NewAccuracy(prior []time.Duration) *Accuracy {
 	return &Accuracy{
 		prior:       prior,
 		predictions: map[arrivalKey][]prediction{},
-		stats:       make([]errorStats, len(horizonEdges)+1),
+		stats:       map[statsKey]errorStats{},
 		lastStop:    map[int]int{},
 	}
 }
 
-func (a *Accuracy) Predicted(bus, stop int, madeAt, at time.Time) {
+func (a *Accuracy) Predicted(route, bus, stop int, madeAt, at time.Time) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	key := arrivalKey{bus: bus, stop: stop}
@@ -66,7 +72,7 @@ func (a *Accuracy) Predicted(bus, stop int, madeAt, at time.Time) {
 	if n := len(kept); n > 0 && kept[n-1].at.Equal(at) {
 		return
 	}
-	kept = append(kept, prediction{madeAt: madeAt, at: at})
+	kept = append(kept, prediction{route: route, madeAt: madeAt, at: at})
 	if len(kept) > predictionsKept {
 		kept = kept[len(kept)-predictionsKept:]
 	}
@@ -85,31 +91,32 @@ func (a *Accuracy) Passed(bus, stop int, at time.Time) {
 		if at.Sub(p.madeAt) > predictionMaxAge || p.madeAt.After(at) {
 			continue
 		}
-		bucket := bucketOf(p.at.Sub(p.madeAt))
+		key := statsKey{route: p.route, bucket: bucketOf(p.at.Sub(p.madeAt))}
 		miss := at.Sub(p.at)
-		stats := &a.stats[bucket]
+		stats := a.stats[key]
 		if stats.count == 0 {
 			stats.mean = miss
 		} else {
 			stats.mean += time.Duration(learningWeight * float64(miss-stats.mean))
 		}
 		stats.count++
+		a.stats[key] = stats
 	}
 	delete(a.predictions, key)
 }
 
-func (a *Accuracy) Correction(ahead time.Duration) time.Duration {
+func (a *Accuracy) Correction(route int, ahead time.Duration) time.Duration {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	return a.correction(bucketOf(ahead))
+	return a.correction(route, bucketOf(ahead))
 }
 
-func (a *Accuracy) correction(bucket horizonBucket) time.Duration {
+func (a *Accuracy) correction(route int, bucket horizonBucket) time.Duration {
 	prior := time.Duration(0)
 	if int(bucket) < len(a.prior) {
 		prior = a.prior[bucket]
 	}
-	stats := a.stats[bucket]
+	stats := a.stats[statsKey{route: route, bucket: bucket}]
 	if stats.count == 0 {
 		return prior
 	}
@@ -121,6 +128,7 @@ func (a *Accuracy) correction(bucket horizonBucket) time.Duration {
 }
 
 type BucketReport struct {
+	Route        int
 	Below        time.Duration
 	Correction   time.Duration
 	Observations int
@@ -129,13 +137,13 @@ type BucketReport struct {
 func (a *Accuracy) Report() []BucketReport {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	reports := make([]BucketReport, len(a.stats))
-	for i := range a.stats {
+	var reports []BucketReport
+	for key, stats := range a.stats {
 		below := time.Duration(0)
-		if i < len(horizonEdges) {
-			below = horizonEdges[i]
+		if int(key.bucket) < len(horizonEdges) {
+			below = horizonEdges[key.bucket]
 		}
-		reports[i] = BucketReport{Below: below, Correction: a.correction(horizonBucket(i)), Observations: a.stats[i].count}
+		reports = append(reports, BucketReport{Route: key.route, Below: below, Correction: a.correction(key.route, key.bucket), Observations: stats.count})
 	}
 	return reports
 }

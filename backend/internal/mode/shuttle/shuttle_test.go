@@ -147,21 +147,24 @@ func TestRideFollowsDowntownerETAs(t *testing.T) {
 
 func TestAccuracyLearnsFromArrivals(t *testing.T) {
 	a := NewAccuracy([]time.Duration{-30 * time.Second, 0, 0, 0, 0})
-	if got := a.Correction(time.Minute); got != -30*time.Second {
+	if got := a.Correction(14, time.Minute); got != -30*time.Second {
 		t.Fatalf("prior %v", got)
 	}
 	start := time.Unix(1794957921, 0)
 	for i := 0; i < 40; i++ {
 		madeAt := start.Add(time.Duration(i) * time.Hour)
-		a.Predicted(1, 7, madeAt, madeAt.Add(8*time.Minute))
+		a.Predicted(14, 1, 7, madeAt, madeAt.Add(8*time.Minute))
 		a.Passed(1, 7, madeAt.Add(7*time.Minute))
 		a.Passed(1, 8, madeAt.Add(9*time.Minute))
 	}
-	if got := a.Correction(8 * time.Minute); got > -50*time.Second || got < -61*time.Second {
+	if got := a.Correction(14, 8*time.Minute); got > -50*time.Second || got < -61*time.Second {
 		t.Fatalf("learned %v, want about -1m", got)
 	}
-	if got := a.Correction(time.Minute); got != -30*time.Second {
+	if got := a.Correction(14, time.Minute); got != -30*time.Second {
 		t.Fatalf("other bucket changed to %v", got)
+	}
+	if got := a.Correction(13, 8*time.Minute); got != 0 {
+		t.Fatalf("other route changed to %v", got)
 	}
 }
 
