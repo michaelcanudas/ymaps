@@ -1,0 +1,13 @@
+.maplibregl-ctrl-attrib.maplibregl-compact {
+  background-color: rgba(7, 15, 31, 0.8);
+  color: #5d6f8c;
+}
+.maplibregl-ctrl-attrib a {
+  color: #5d6f8c;
+}
+.maplibregl-ctrl-attrib-button {
+  filter: invert(0.6);
+}
+html, body, #root {
+  background-color: #0e1a2e;
+}
