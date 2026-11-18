@@ -12,6 +12,7 @@ struct DestinationLiveActivity: Widget {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(context.attributes.destination)
                         .font(.headline)
+                        .lineLimit(1)
                     Text(context.state.step)
                         .font(.subheadline)
                         .foregroundStyle(Brand.textSecondary)

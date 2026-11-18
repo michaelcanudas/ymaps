@@ -19,6 +19,7 @@ struct RootView: View {
             .ignoresSafeArea()
             .safeAreaInset(edge: .bottom) {
                 TripPanel(searchRequest: searchRequest)
+                    .dynamicTypeSize(...DynamicTypeSize.xLarge)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
             }
@@ -50,12 +51,14 @@ struct RootView: View {
             #endif
             if let route = trip.route {
                 ForEach(Array(route.legs.enumerated()), id: \.offset) { _, leg in
-                    if let line = leg.line {
+                    if let line = leg.line, Polyline.decode(line.path).count > 1 {
                         MapPolyline(coordinates: Polyline.decode(line.path))
                             .stroke(Color(hex: line.color).opacity(0.25), lineWidth: 3)
                     }
-                    MapPolyline(coordinates: Polyline.decode(leg.path))
-                        .stroke(RootView.color(for: leg), style: RootView.stroke(for: leg))
+                    if Polyline.decode(leg.path).count > 1 {
+                        MapPolyline(coordinates: Polyline.decode(leg.path))
+                            .stroke(RootView.color(for: leg), style: RootView.stroke(for: leg))
+                    }
                 }
                 ForEach(Array(route.legs.dropFirst().enumerated()), id: \.offset) { _, leg in
                     Annotation("", coordinate: leg.from.coordinate.location) {
@@ -65,10 +68,12 @@ struct RootView: View {
                             .frame(width: 12, height: 12)
                     }
                 }
-                Annotation("", coordinate: route.legs.last!.to.coordinate.location) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(.white)
-                        .frame(width: 14, height: 14)
+                if let last = route.legs.last {
+                    Annotation("", coordinate: last.to.coordinate.location) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(.white)
+                            .frame(width: 14, height: 14)
+                    }
                 }
             }
         }
@@ -86,6 +91,16 @@ struct RootView: View {
         }
     }
 
+    static func ink(for leg: Leg) -> Color {
+        let hex: String
+        switch leg.mode {
+        case "bike": hex = "34C759"
+        case "veo": hex = "AF52DE"
+        default: hex = leg.line?.color ?? "FFFFFF"
+        }
+        return Color.luminance(hex) > 0.5 ? .black : .white
+    }
+
     static func stroke(for leg: Leg) -> StrokeStyle {
         leg.mode == "walk"
             ? StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 8])
@@ -93,7 +108,10 @@ struct RootView: View {
     }
 
     static func framing(_ route: Route) -> MapCameraPosition {
-        let points = route.legs.flatMap { Polyline.decode($0.path) }
+        var points = route.legs.flatMap { Polyline.decode($0.path) }
+        if points.isEmpty, let last = route.legs.last {
+            points = [route.legs[0].from.coordinate.location, last.to.coordinate.location]
+        }
         var rect = MKMapRect.null
         for point in points {
             let mapPoint = MKMapPoint(point)
@@ -139,7 +157,7 @@ struct TripPanel: View {
         case .loading(let destination):
             card {
                 HStack {
-                    Text(destination).font(.headline)
+                    Text(destination).font(.headline).lineLimit(1)
                     Spacer()
                     ProgressView().tint(.white)
                 }
@@ -148,6 +166,7 @@ struct TripPanel: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(message)
                     .font(.subheadline)
+                    .lineLimit(2)
                     .foregroundStyle(.white.opacity(0.6))
                     .padding(.horizontal, 8)
                 searchBar
@@ -217,7 +236,7 @@ struct TripPanel: View {
     private func choices(_ destination: String, _ places: [Place]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Which \(destination)?").font(.headline)
+                Text("Which \(destination)?").font(.headline).lineLimit(1)
                 Spacer()
                 CloseButton { trip.clear() }
             }
@@ -227,7 +246,7 @@ struct TripPanel: View {
                     trip.go(to: destination, placeId: place.id)
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(place.name).font(.body.weight(.medium))
+                        Text(place.name).font(.body.weight(.medium)).lineLimit(1)
                         if let address = place.address {
                             Text(address)
                                 .font(.caption)
@@ -254,8 +273,10 @@ struct RouteCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
-                (Text("\(minutesAway)").font(.system(size: 40, weight: .bold, design: .rounded))
-                    + Text(" min").font(.title3.weight(.semibold)))
+                (Text(Duration.long(minutesAway).0).font(.system(size: 40, weight: .bold, design: .rounded))
+                    + Text(Duration.long(minutesAway).1).font(.title3.weight(.semibold)))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                 Spacer()
                 CloseButton { trip.clear() }
             }
@@ -265,6 +286,8 @@ struct RouteCard: View {
                     .lineLimit(1)
                 Text(subtitle)
                     .font(.subheadline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                     .foregroundStyle(.white.opacity(0.55))
             }
             LegStrip(legs: route.legs)
@@ -316,6 +339,8 @@ struct OptionRow: View {
                 Spacer()
                 Text(option.arriveAt.formatted(date: .omitted, time: .shortened))
                     .font(.subheadline.monospacedDigit())
+                    .lineLimit(1)
+                    .fixedSize()
                     .foregroundStyle(.white.opacity(0.5))
             }
             .padding(.vertical, 10)
@@ -333,40 +358,67 @@ struct LegStrip: View {
 
     var body: some View {
         let shown = legs.filter { $0.isRide || $0.arriveAt.timeIntervalSince($0.departAt) >= 45 }
+        let rides = legs.filter(\.isRide)
+        ViewThatFits(in: .horizontal) {
+            row(shown, names: true)
+            row(shown, names: false)
+            row(rides.isEmpty ? shown : rides, names: false)
+            row(rides.isEmpty ? shown : rides, names: false, minutes: false)
+        }
+    }
+
+    private func row(_ legs: [Leg], names: Bool, minutes: Bool = true) -> some View {
         HStack(spacing: 6) {
-            ForEach(Array(shown.enumerated()), id: \.offset) { index, leg in
+            ForEach(Array(legs.enumerated()), id: \.offset) { index, leg in
                 if index > 0 {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.white.opacity(0.3))
                 }
-                chip(for: leg)
+                chip(for: leg, name: names, minutes: minutes)
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
-    private func chip(for leg: Leg) -> some View {
+    private func chip(for leg: Leg, name: Bool, minutes: Bool) -> some View {
         HStack(spacing: 4) {
             Image(systemName: ModeSymbol.name(for: leg.mode))
-            if let line = leg.line {
-                Text(shortName(line.name)).lineLimit(1)
+            if name, let line = leg.line {
+                Text(LegStrip.shortName(line.name))
             }
-            Text("\(leg.minutes)m")
-                .monospacedDigit()
-                .opacity(leg.line == nil ? 1 : 0.7)
+            if minutes {
+                Text(Duration.short(leg.minutes))
+                    .monospacedDigit()
+                    .opacity(leg.line == nil ? 1 : 0.7)
+            }
         }
+        .lineLimit(1)
+        .fixedSize()
         .font(.subheadline.weight(.semibold))
         .padding(.horizontal, leg.isRide ? 10 : 2)
         .padding(.vertical, 6)
         .background(leg.isRide ? RootView.color(for: leg).opacity(0.9) : .clear, in: Capsule())
-        .foregroundStyle(leg.isRide ? .black : .white.opacity(0.8))
+        .foregroundStyle(leg.isRide ? RootView.ink(for: leg) : .white.opacity(0.8))
     }
 
-    private func shortName(_ name: String) -> String {
-        if let first = name.split(separator: " ").first, first.allSatisfy(\.isNumber) {
+    static func shortName(_ name: String) -> String {
+        let words = name.split(separator: " ")
+        if let first = words.first, first.count <= 4, first.contains(where: \.isNumber) || first.allSatisfy(\.isUppercase) {
             return String(first)
         }
-        return String(name.split(separator: "-").first ?? Substring(name)).trimmingCharacters(in: .whitespaces)
+        let head = name.split(separator: "-").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? name
+        return head.count <= 10 ? head : String(head.prefix(9)) + "…"
+    }
+}
+
+enum Duration {
+    static func short(_ minutes: Int) -> String {
+        minutes < 60 ? "\(minutes)m" : "\(minutes / 60)h \(minutes % 60)m"
+    }
+
+    static func long(_ minutes: Int) -> (String, String) {
+        minutes < 60 ? ("\(minutes)", " min") : ("\(minutes / 60)", minutes % 60 == 0 ? " hr" : " hr \(minutes % 60) min")
     }
 }
 
@@ -386,12 +438,12 @@ struct CloseButton: View {
 }
 
 extension Color {
-    init(hex: String) {
+    static func luminance(_ hex: String) -> Double {
         let value = UInt64(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0xFFFFFF
-        self.init(
-            red: Double((value >> 16) & 0xFF) / 255,
-            green: Double((value >> 8) & 0xFF) / 255,
-            blue: Double(value & 0xFF) / 255
-        )
+        let red = Double((value >> 16) & 0xFF) / 255
+        let green = Double((value >> 8) & 0xFF) / 255
+        let blue = Double(value & 0xFF) / 255
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
     }
+
 }

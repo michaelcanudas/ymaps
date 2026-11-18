@@ -78,6 +78,22 @@ struct Route: Codable, Hashable {
     let alternatives: [Route]?
 }
 
+extension Route {
+    var withoutEmptyAlternatives: Route {
+        Route(
+            id: id,
+            place: place,
+            departAt: departAt,
+            arriveAt: arriveAt,
+            costCents: costCents,
+            legs: legs,
+            label: label,
+            kind: kind,
+            alternatives: alternatives?.filter { !$0.legs.isEmpty }.prefix(2).map { $0 }
+        )
+    }
+}
+
 struct Unresolved: Codable {
     let destination: String
     let places: [Place]
@@ -118,18 +134,21 @@ struct API {
     func plan(from origin: Coordinate, to destination: String, placeId: String? = nil) async throws -> PlanResult {
         var request = URLRequest(url: baseURL.appending(path: "v1/routes"))
         request.httpMethod = "POST"
+        request.timeoutInterval = 25
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(RouteRequest(origin: origin, destination: destination, placeId: placeId))
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch status {
         case 200:
-            return .route(try Self.decoder.decode(Route.self, from: data))
+            let route = try Self.decoder.decode(Route.self, from: data)
+            guard !route.legs.isEmpty else { throw APIError.server("No route found.") }
+            return .route(route.withoutEmptyAlternatives)
         case 422:
             let unresolved = try Self.decoder.decode(Unresolved.self, from: data)
             return unresolved.places.isEmpty ? .notFound : .choose(unresolved.places)
         default:
-            throw APIError.server("Something went wrong (\(status)).")
+            throw APIError.server("ymaps couldn't plan that right now.")
         }
     }
 
@@ -141,7 +160,8 @@ struct API {
         ]
         let (data, response) = try await URLSession.shared.data(from: components.url!)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return try Self.decoder.decode(Route.self, from: data)
+        let route = try Self.decoder.decode(Route.self, from: data)
+        return route.legs.isEmpty ? nil : route.withoutEmptyAlternatives
     }
 
     static let decoder: JSONDecoder = {

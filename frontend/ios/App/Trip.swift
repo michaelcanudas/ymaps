@@ -19,6 +19,7 @@ final class Trip: NSObject, CLLocationManagerDelegate {
     var here = Coordinate(lat: 41.3083, lon: -72.9279)
 
     private let api = API.configured
+    private var generation = 0
     private let locationManager = CLLocationManager()
     private var activity: Activity<DestinationActivityAttributes>?
     private var refreshTask: Task<Void, Never>?
@@ -50,21 +51,29 @@ final class Trip: NSObject, CLLocationManagerDelegate {
         let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         end()
+        generation += 1
+        let request = generation
         phase = .loading(trimmed)
         Task {
+            let result: Phase
             do {
                 switch try await api.plan(from: here, to: trimmed, placeId: placeId) {
-                case .route(let route): phase = .route([route] + (route.alternatives ?? []), 0)
-                case .choose(let places): phase = .choosing(trimmed, places)
-                case .notFound: phase = .failed("Couldn't find \(trimmed).")
+                case .route(let route): result = .route([route] + (route.alternatives ?? []), 0)
+                case .choose(let places): result = .choosing(trimmed, Array(places.prefix(5)))
+                case .notFound: result = .failed("Couldn't find \(trimmed).")
                 }
+            } catch is URLError {
+                result = .failed("Can't reach ymaps. Check your connection.")
             } catch {
-                phase = .failed(error.localizedDescription)
+                result = .failed(error.localizedDescription)
             }
+            guard request == generation else { return }
+            phase = result
         }
     }
 
     func clear() {
+        generation += 1
         end()
         phase = .idle
     }
@@ -95,15 +104,19 @@ final class Trip: NSObject, CLLocationManagerDelegate {
     }
 
     private func refresh() async {
-        guard case .route(var options, let index) = phase,
-              let fresh = try? await api.refresh(options[index].id, from: here) else { return }
+        guard case .route(let current, let index) = phase,
+              let fresh = try? await api.refresh(current[index].id, from: here),
+              case .route(var options, let now) = phase, now == index, options.indices.contains(index) else { return }
         options[index] = fresh
         phase = .route(options, index)
         await activity?.update(content(for: fresh))
     }
 
     private func content(for route: Route) -> ActivityContent<DestinationActivityAttributes.ContentState> {
-        let next = route.legs.first(where: { $0.arriveAt > .now }) ?? route.legs.last!
+        guard let fallback = route.legs.last else {
+            return ActivityContent(state: .init(arriveAt: route.arriveAt, step: route.place.name, symbol: "location.fill", mode: "walk"), staleDate: nil)
+        }
+        let next = route.legs.first(where: { $0.arriveAt > .now }) ?? fallback
         let state = DestinationActivityAttributes.ContentState(
             arriveAt: route.arriveAt,
             step: Trip.instruction(for: next),
