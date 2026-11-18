@@ -24,7 +24,7 @@ const (
 	preferencePruneSlack  = 60 * time.Minute
 	candidatesKept        = 14
 	walkDetour            = 1.3
-	minimumRide           = 2 * time.Minute
+	minimumRide           = 3 * time.Minute
 )
 
 type stepKind int

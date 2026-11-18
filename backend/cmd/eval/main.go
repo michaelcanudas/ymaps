@@ -215,6 +215,15 @@ func evaluate(base string, t trip, shuttle *shuttleState) result {
 		}
 	}
 	walkOnlyRoute := len(got.Legs) == 1 && got.Legs[0].Mode == "walk"
+	riding := time.Duration(0)
+	for _, l := range got.Legs {
+		if l.Mode != "walk" {
+			riding += l.ArriveAt.Sub(l.DepartAt)
+		}
+	}
+	if total := got.ArriveAt.Sub(got.DepartAt); !walkOnlyRoute && riding < total/4 {
+		fail("rides only %s of a %s trip", riding.Round(time.Second), total.Round(time.Second))
+	}
 	if straight <= shortTripMeters && !walkOnlyRoute {
 		fail("trip is %.0f m but the route is not a walk", straight)
 	}

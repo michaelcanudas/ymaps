@@ -178,6 +178,7 @@ func materialize(ctx context.Context, s streets.Streets, trip Trip, final *label
 	for _, leg := range legs {
 		if leg.Mode != Walk {
 			c.modes[leg.Mode] = true
+			c.riding += leg.ArriveAt.Sub(leg.DepartAt)
 		}
 	}
 	return c, true

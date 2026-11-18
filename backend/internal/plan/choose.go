@@ -19,8 +19,9 @@ type policy struct {
 }
 
 const (
-	longWalk  = 10 * time.Minute
-	shortWalk = 8 * time.Minute
+	longWalk         = 10 * time.Minute
+	shortWalk        = 8 * time.Minute
+	minimumRideShare = 0.25
 )
 
 var (
@@ -75,7 +76,16 @@ type candidate struct {
 	wait   time.Duration
 	cost   int
 	rides  int
+	riding time.Duration
 	modes  map[ModeName]bool
+}
+
+func (c candidate) worthRiding() bool {
+	if c.rides == 0 {
+		return true
+	}
+	total := c.arrive.Sub(c.option.DepartAt())
+	return total > 0 && c.riding.Seconds() >= minimumRideShare*total.Seconds()
 }
 
 func (c candidate) walkOnly() bool {
@@ -109,7 +119,7 @@ func allowed(c candidate, prefs Preferences) bool {
 func (p policy) choose(candidates []candidate, prefs Preferences) (candidate, bool) {
 	var usable []candidate
 	for _, c := range candidates {
-		if allowed(c, prefs) {
+		if allowed(c, prefs) && c.worthRiding() {
 			usable = append(usable, c)
 		}
 	}

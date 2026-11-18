@@ -114,7 +114,7 @@ Rentals have rules of their own:
 - The ride is at least 400 m and ends closer to the destination.
 - A route has at most one rental.
 
-Transit rides shorter than 2 minutes are skipped. The search keeps the best few routes, then each is filled in with real street paths and times and checked again.
+Transit rides shorter than 3 minutes are skipped, and a route whose rides add up to less than a quarter of its time is not offered. The search keeps the best few routes, then each is filled in with real street paths and times and checked again.
 
 ### Choosing
 
