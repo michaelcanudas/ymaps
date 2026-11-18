@@ -121,7 +121,7 @@ Transit rides shorter than 3 minutes are skipped, and a route whose rides add up
 There is no exchange rate between minutes and money. The planner picks a route by these steps:
 
 1. A walk of 8 minutes or less wins.
-2. Otherwise, take the earliest estimated arrival. Routes within 3 minutes of it, 5 at night, count as tied.
+2. Otherwise, take the earliest estimated arrival. Routes within 3 minutes of it, 5 at night, count as tied. When the earliest route is a walk longer than 20 minutes, the window grows by half the walking beyond 20 minutes, up to 12, so a slightly slower ride beats a long walk.
 3. Among tied routes, prefer less burden: walking minutes, walking beyond 10 minutes counted again, outdoor waiting at 1.5 times, and 3 minutes per transfer. At night walking counts 1.5 times and waiting 2.5 times.
 4. A free route within 4 burden-minutes of the lightest (6 at night) wins over a paid one. Otherwise the lightest wins, then the cheapest.
 
@@ -129,7 +129,9 @@ Night is after dusk and before dawn in New Haven, by month.
 
 ### Alternatives
 
-Besides the chosen route, the response offers up to two alternatives from the routes the search kept, in this order of kinds: free (when the chosen route costs money), faster by 3 minutes or more, 5 or more minutes less walking, and cheaper by a dollar or more but at most 8 minutes slower. An alternative must be better than the chosen route on arrival, walking, or cost, arrive within 15 minutes of it, and differ meaningfully from it and from the other alternative: other modes, or 3 minutes, a dollar, or 5 walking minutes apart. Each carries a label such as "Free · 4 min slower". Refreshing an alternative's id returns the current route of the same kind, or the chosen route when none is left.
+When the chosen route does not use the shuttle and a shuttle-only route (walking and Yale Shuttle rides) arrives within 15 minutes of it, the earliest such route is always one of the alternatives, labeled "Yale Shuttle · 6 min slower". Students often prefer it: it is free, warm, and safe at night.
+
+Besides the chosen route, the response offers up to two alternatives in all, filling the remaining places from the routes the search kept, in this order of kinds: free (when the chosen route costs money), faster by 3 minutes or more, 5 or more minutes less walking, and cheaper by a dollar or more but at most 8 minutes slower. An alternative must be better than the chosen route on arrival, walking, or cost, arrive within 15 minutes of it, and differ meaningfully from it and from the other alternative: other modes, or 3 minutes, a dollar, or 5 walking minutes apart. Each carries a label such as "Free · 4 min slower". Refreshing an alternative's id returns the current route of the same kind, or the chosen route when none is left.
 
 A request may carry `preferences`: most walking minutes, most cost in cents (0 for free only), and modes to avoid. They are hard limits. When no route meets them, the default route is returned.
 

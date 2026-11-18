@@ -56,11 +56,14 @@ type route struct {
 			Coordinate coordinate `json:"coordinate"`
 		} `json:"entryway"`
 	} `json:"place"`
-	ComputedAt time.Time `json:"computedAt"`
-	DepartAt   time.Time `json:"departAt"`
-	ArriveAt   time.Time `json:"arriveAt"`
-	Cost       int       `json:"costCents"`
-	Legs       []leg     `json:"legs"`
+	ComputedAt   time.Time `json:"computedAt"`
+	DepartAt     time.Time `json:"departAt"`
+	ArriveAt     time.Time `json:"arriveAt"`
+	Cost         int       `json:"costCents"`
+	Legs         []leg     `json:"legs"`
+	Alternatives []route   `json:"alternatives"`
+	Label        string    `json:"label"`
+	Kind         string    `json:"kind"`
 }
 
 type result struct {
@@ -68,6 +71,7 @@ type result struct {
 	Summary  string   `json:"summary"`
 	Failures []string `json:"failures"`
 	Modes    []string `json:"modes"`
+	Kinds    []string `json:"kinds"`
 }
 
 const (
@@ -186,6 +190,23 @@ func evaluate(base string, t trip, shuttle *shuttleState) result {
 		destination = got.Place.Entryway.Coordinate
 	}
 	r.Summary = summarize(got)
+	for _, alternative := range got.Alternatives {
+		r.Kinds = append(r.Kinds, alternative.Kind)
+		r.Summary += "\n     alt " + alternative.Label + " | " + summarize(alternative)
+		if alternative.Label == "" || alternative.Kind == "" {
+			fail("alternative without a label or kind")
+		}
+		if alternative.Kind == "shuttle" {
+			for _, l := range alternative.Legs {
+				if l.Mode != "walk" && l.Mode != "shuttle" {
+					fail("shuttle alternative uses %s", l.Mode)
+				}
+			}
+		}
+	}
+	if len(got.Alternatives) > 2 {
+		fail("%d alternatives", len(got.Alternatives))
+	}
 	if t.Place != "" && !strings.Contains(strings.ToLower(got.Place.Name), strings.ToLower(t.Place)) {
 		fail("resolved to %q, want %q", got.Place.Name, t.Place)
 	}
@@ -261,8 +282,16 @@ func evaluate(base string, t trip, shuttle *shuttleState) result {
 		fail("arrives %s after just walking would", got.ArriveAt.Sub(got.ComputedAt.Add(walkOnly)).Round(time.Second))
 	}
 	if contains(t.Expect, "shuttle_if_obvious") && !modes["shuttle"] {
-		if reason, obvious := shuttle.obvious(origin, destination, walkOnly); obvious {
-			fail("shuttle is the obvious choice: %s", reason)
+		if reason, total, obvious := shuttle.obvious(origin, destination, walkOnly); obvious {
+			offered := false
+			for _, alternative := range got.Alternatives {
+				offered = offered || alternative.Kind == "shuttle"
+			}
+			if total <= got.ArriveAt.Sub(got.ComputedAt) {
+				fail("shuttle arrives no later and is free: %s", reason)
+			} else if !offered {
+				fail("shuttle not even offered: %s", reason)
+			}
 		}
 	}
 	return r
@@ -383,9 +412,9 @@ func (s *shuttleState) etasAt(stop int) map[int]time.Time {
 	return byBus
 }
 
-func (s *shuttleState) obvious(origin, destination coordinate, walkOnly time.Duration) (string, bool) {
+func (s *shuttleState) obvious(origin, destination coordinate, walkOnly time.Duration) (string, time.Duration, bool) {
 	if walkOnly < 9*time.Minute {
-		return "", false
+		return "", 0, false
 	}
 	now := time.Now()
 	for _, r := range s.routes {
@@ -437,11 +466,11 @@ func (s *shuttleState) obvious(origin, destination coordinate, walkOnly time.Dur
 					}
 					total := arrives.Add(egress).Sub(now)
 					if total <= walkOnly-3*time.Minute {
-						return fmt.Sprintf("%s from %s to %s in %s vs walking %s", r.Name, board.Name, alight.Name, total.Round(time.Minute), walkOnly.Round(time.Minute)), true
+						return fmt.Sprintf("%s from %s to %s in %s vs walking %s", r.Name, board.Name, alight.Name, total.Round(time.Minute), walkOnly.Round(time.Minute)), total, true
 					}
 				}
 			}
 		}
 	}
-	return "", false
+	return "", 0, false
 }

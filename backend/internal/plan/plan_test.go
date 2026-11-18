@@ -167,7 +167,7 @@ func TestNightWeighsWalkingMore(t *testing.T) {
 	}
 }
 
-func TestAlternativesOfferTheFreeRoute(t *testing.T) {
+func TestAlternativesOfferAFreeRoute(t *testing.T) {
 	trip, free, paid := longTrip()
 	paid.Stops[1] = at(paid.Stops[1].Stop, 6)
 	free.Stops[0] = at(free.Stops[0].Stop, 5)
@@ -180,15 +180,42 @@ func TestAlternativesOfferTheFreeRoute(t *testing.T) {
 	if choice.Route.CostCents() == 0 {
 		t.Fatalf("main %v", modes(choice.Route))
 	}
-	if len(choice.Alternatives) == 0 || choice.Alternatives[0].Kind != Free || choice.Alternatives[0].Option.CostCents() != 0 {
+	if len(choice.Alternatives) == 0 || choice.Alternatives[0].Option.CostCents() != 0 {
 		t.Fatalf("alternatives %+v", choice.Alternatives)
 	}
-	if choice.Alternatives[0].Label != "Free · 7 min slower" {
-		t.Fatalf("label %q", choice.Alternatives[0].Label)
+}
+
+func TestAlternativesIncludeAShuttle(t *testing.T) {
+	trip, free, paid := longTrip()
+	paid.Stops[1] = at(paid.Stops[1].Stop, 6)
+	free.Stops[0] = at(free.Stops[0].Stop, 5)
+	free.Stops[1] = at(free.Stops[1].Stop, 13)
+	planner := Planner{Streets: streets.Estimate{}, Modes: []Mode{fixedMode{Shuttle, Network{Rides: []Ride{free}}}, fixedMode{Bus, Network{Rides: []Ride{paid}}}}}
+	choice, err := planner.Choose(context.Background(), trip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(choice.Alternatives) == 0 || choice.Alternatives[0].Kind != ByShuttle || choice.Alternatives[0].Label != "Yale Shuttle · 7 min slower" {
+		t.Fatalf("alternatives %+v", choice.Alternatives)
 	}
 	for _, alternative := range choice.Alternatives[1:] {
-		if alternative.Kind == Free {
-			t.Fatal("two free alternatives")
+		if alternative.Option.CostCents() == 0 && alternative.Kind == Free {
+			t.Fatal("the shuttle was offered twice")
 		}
+	}
+}
+
+func TestLongWalksLoseToASlightlySlowerRide(t *testing.T) {
+	origin := point("origin", 41.3000, -72.9300)
+	a := point("a", 41.3003, -72.9300)
+	b := point("b", 41.3240, -72.9300)
+	destination := point("destination", 41.3243, -72.9300)
+	trip := Trip{Origin: origin, Destination: destination, DepartAt: noon}
+	walk := plan(t, trip)
+	minutes := int(walk.ArriveAt().Sub(noon).Minutes())
+	slow := ride(Bus, "slow", Fare{Cents: 175, Group: "cttransit"}, at(a, minutes-2), at(b, minutes+5))
+	option := plan(t, trip, fixedMode{Bus, Network{Rides: []Ride{slow}}})
+	if option.Legs[1].Mode != Bus {
+		t.Fatalf("a %d minute walk beat a bus 6 minutes slower: %v", minutes, modes(option))
 	}
 }

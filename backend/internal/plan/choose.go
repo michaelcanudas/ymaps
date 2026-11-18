@@ -22,6 +22,8 @@ const (
 	longWalk         = 10 * time.Minute
 	shortWalk        = 8 * time.Minute
 	minimumRideShare = 0.25
+	longWalkOnly     = 20 * time.Minute
+	widestTieWindow  = 12 * time.Minute
 )
 
 var (
@@ -137,10 +139,16 @@ func (p policy) choose(candidates []candidate, prefs Preferences) (candidate, bo
 			earliest = c.arrive
 		}
 	}
+	window := p.tieWindow
+	for _, c := range usable {
+		if c.walkOnly() && c.arrive.Equal(earliest) && c.walk > longWalkOnly {
+			window = min(widestTieWindow, window+(c.walk-longWalkOnly)/2)
+		}
+	}
 	var tied []candidate
 	lightest := math.Inf(1)
 	for _, c := range usable {
-		if !c.arrive.After(earliest.Add(p.tieWindow)) {
+		if !c.arrive.After(earliest.Add(window)) {
 			tied = append(tied, c)
 			lightest = math.Min(lightest, p.burden(c))
 		}

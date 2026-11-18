@@ -30,6 +30,38 @@ func travelDuration(meters float64, stops int) time.Duration {
 
 func (l *line) startIndex(b bus, etas etaLookup) int {
 	n := len(l.stops)
+	soonest, soonestAt := -1, time.Time{}
+	for k, id := range l.stops {
+		at, ok := etas(id, b.ID)
+		if !ok {
+			continue
+		}
+		if soonest < 0 || at.Before(soonestAt) || at.Equal(soonestAt) && l.stops[(k+n-1)%n] == b.LastStop {
+			soonest, soonestAt = k, at
+		}
+	}
+	if soonest >= 0 {
+		best, bestScore := soonest, time.Duration(1<<62)
+		for k, id := range l.stops {
+			if id != l.stops[soonest] {
+				continue
+			}
+			score := time.Duration(1 << 61)
+			if next, ok := etas(l.stops[(k+1)%n], b.ID); ok {
+				score = next.Sub(soonestAt)
+				if score < 0 {
+					score = time.Duration(1<<60) - score
+				}
+			}
+			if l.stops[(k+n-1)%n] == b.LastStop {
+				score -= time.Minute
+			}
+			if score < bestScore {
+				best, bestScore = k, score
+			}
+		}
+		return best
+	}
 	if b.LastStop != 0 {
 		for k, id := range l.stops {
 			if id == b.LastStop {
@@ -37,13 +69,7 @@ func (l *line) startIndex(b bus, etas etaLookup) int {
 			}
 		}
 	}
-	best, bestAt := 0, time.Time{}
-	for k, id := range l.stops {
-		if at, ok := etas(id, b.ID); ok && (bestAt.IsZero() || at.Before(bestAt)) {
-			best, bestAt = k, at
-		}
-	}
-	return best
+	return 0
 }
 
 type anchor struct {

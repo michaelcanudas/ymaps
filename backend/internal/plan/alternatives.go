@@ -13,6 +13,7 @@ const (
 	Faster      Kind = "faster"
 	LessWalking Kind = "lessWalking"
 	Cheaper     Kind = "cheaper"
+	ByShuttle   Kind = "shuttle"
 )
 
 type Alternative struct {
@@ -36,6 +37,12 @@ const (
 )
 
 func (p policy) alternatives(main candidate, candidates []candidate, prefs Preferences) []Alternative {
+	var picked []Alternative
+	var pickedCandidates []candidate
+	if shuttle, ok := p.shuttleAlternative(main, candidates, prefs); ok {
+		picked = append(picked, Alternative{Option: shuttle.option, Kind: ByShuttle, Label: describeTradeOff(ByShuttle, shuttle, main)})
+		pickedCandidates = append(pickedCandidates, shuttle)
+	}
 	var usable []candidate
 	for _, c := range candidates {
 		if c.option.ArriveAt().Equal(main.option.ArriveAt()) && sameModes(c, main) && c.cost == main.cost {
@@ -52,8 +59,6 @@ func (p policy) alternatives(main candidate, candidates []candidate, prefs Prefe
 		}
 		usable = append(usable, c)
 	}
-	var picked []Alternative
-	var pickedCandidates []candidate
 	offer := func(kind Kind, matches func(candidate) bool, better func(a, b candidate) bool) {
 		if len(picked) == alternativesKept {
 			return
@@ -92,6 +97,26 @@ func (p policy) alternatives(main candidate, candidates []candidate, prefs Prefe
 		return c.cost > 0 && c.cost <= main.cost-cheaperBy && !c.arrive.After(main.arrive.Add(cheaperSlowerLimit))
 	}, cheaper)
 	return picked
+}
+
+func (p policy) shuttleAlternative(main candidate, candidates []candidate, prefs Preferences) (candidate, bool) {
+	if main.modes[Shuttle] {
+		return candidate{}, false
+	}
+	var best *candidate
+	for i := range candidates {
+		c := candidates[i]
+		if !c.modes[Shuttle] || len(c.modes) != 1 || !allowed(c, prefs) || !c.worthRiding() || c.arrive.After(main.arrive.Add(alternativeLateLimit)) {
+			continue
+		}
+		if best == nil || c.arrive.Before(best.arrive) || c.arrive.Equal(best.arrive) && p.burden(c) < p.burden(*best) {
+			best = &candidates[i]
+		}
+	}
+	if best == nil {
+		return candidate{}, false
+	}
+	return *best, true
 }
 
 func sameModes(a, b candidate) bool {
@@ -143,6 +168,8 @@ func timing(c, main candidate) string {
 
 func describeTradeOff(kind Kind, c, main candidate) string {
 	switch kind {
+	case ByShuttle:
+		return "Yale Shuttle · " + timing(c, main)
 	case Free:
 		return "Free · " + timing(c, main)
 	case Faster:
