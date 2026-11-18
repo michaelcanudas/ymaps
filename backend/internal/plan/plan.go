@@ -47,7 +47,6 @@ type Leg struct {
 	To             Point
 	DepartAt       time.Time
 	ArriveAt       time.Time
-	ArriveAtLate   time.Time
 	CostCents      int
 	Path           []geo.LatLon
 	Line           *Line
@@ -63,9 +62,8 @@ type Option struct {
 	Legs []Leg
 }
 
-func (o Option) DepartAt() time.Time     { return o.Legs[0].DepartAt }
-func (o Option) ArriveAt() time.Time     { return o.Legs[len(o.Legs)-1].ArriveAt }
-func (o Option) ArriveAtLate() time.Time { return o.Legs[len(o.Legs)-1].ArriveAtLate }
+func (o Option) DepartAt() time.Time { return o.Legs[0].DepartAt }
+func (o Option) ArriveAt() time.Time { return o.Legs[len(o.Legs)-1].ArriveAt }
 
 func (o Option) CostCents() int {
 	total := 0
@@ -75,44 +73,35 @@ func (o Option) CostCents() int {
 	return total
 }
 
+type Preferences struct {
+	MaxWalk      time.Duration
+	MaxCostCents *int
+	Avoid        map[ModeName]bool
+}
+
 type Trip struct {
 	Origin      Point
 	Destination Point
 	DepartAt    time.Time
+	Preferences Preferences
 }
 
 type Mode interface {
 	Name() ModeName
 	Run(ctx context.Context)
-	Options(ctx context.Context, trip Trip) ([]Option, error)
-}
-
-const walkLateFactor = 1.1
-
-func WalkLeg(ctx context.Context, s streets.Streets, from, to Point, departAt time.Time) (Leg, error) {
-	trace, err := s.Route(ctx, from.At, to.At, streets.Walking)
-	if err != nil {
-		return Leg{}, err
-	}
-	return Leg{
-		Mode:         Walk,
-		From:         from,
-		To:           to,
-		DepartAt:     departAt,
-		ArriveAt:     departAt.Add(trace.Duration),
-		ArriveAtLate: departAt.Add(time.Duration(float64(trace.Duration) * walkLateFactor)),
-		Path:         trace.Path,
-	}, nil
+	Network(ctx context.Context, query Query) (Network, error)
 }
 
 type Planner struct {
-	Modes          []Mode
-	Streets        streets.Streets
-	CentsPerMinute float64
-	ModeTimeout    time.Duration
+	Modes       []Mode
+	Streets     streets.Streets
+	ModeTimeout time.Duration
+	Horizon     time.Duration
 }
 
 var ErrNoRoute = errors.New("no route")
+
+const defaultHorizon = 90 * time.Minute
 
 func (p Planner) Run(ctx context.Context) {
 	for _, mode := range p.Modes {
@@ -121,36 +110,45 @@ func (p Planner) Run(ctx context.Context) {
 }
 
 func (p Planner) Plan(ctx context.Context, trip Trip) (Option, error) {
-	options := p.collect(ctx, trip)
-	if walk, err := WalkLeg(ctx, p.Streets, trip.Origin, trip.Destination, trip.DepartAt); err == nil {
-		options = append(options, Option{Legs: []Leg{walk}})
-	}
-	var best Option
-	bestScore := 0.0
-	for _, option := range options {
-		if len(option.Legs) == 0 {
-			continue
-		}
-		score := p.score(option, trip.DepartAt)
-		if len(best.Legs) == 0 || score < bestScore {
-			best, bestScore = option, score
-		}
-	}
-	if len(best.Legs) == 0 {
-		return Option{}, ErrNoRoute
-	}
-	return best, nil
+	choice, err := p.Choose(ctx, trip)
+	return choice.Route, err
 }
 
-func (p Planner) score(option Option, departAt time.Time) float64 {
-	minutes := option.ArriveAtLate().Sub(departAt).Minutes()
-	if p.CentsPerMinute <= 0 {
-		return minutes
+func (p Planner) Choose(ctx context.Context, trip Trip) (Choice, error) {
+	horizon := p.Horizon
+	if horizon <= 0 {
+		horizon = defaultHorizon
 	}
-	return minutes + float64(option.CostCents())/p.CentsPerMinute
+	query := Query{
+		Origin:      trip.Origin.At,
+		Destination: trip.Destination.At,
+		DepartAt:    trip.DepartAt,
+		Until:       trip.DepartAt.Add(horizon),
+	}
+	network := p.collect(ctx, query, trip.Preferences.Avoid)
+	s := newSearch(p.Streets, trip, network)
+	candidates, err := s.run(ctx)
+	if err != nil {
+		return Choice{}, err
+	}
+	options := materializeAll(ctx, p.Streets, trip, candidates)
+	policy := policyAt(trip.DepartAt)
+	for _, c := range options {
+		log.Printf("candidate %s", policy.describe(c, trip.DepartAt))
+	}
+	prefs := trip.Preferences
+	best, ok := policy.choose(options, prefs)
+	if !ok {
+		prefs = Preferences{}
+		best, ok = policy.choose(options, prefs)
+	}
+	if !ok {
+		return Choice{}, ErrNoRoute
+	}
+	return Choice{Route: best.option, Alternatives: policy.alternatives(best, options, prefs)}, nil
 }
 
-func (p Planner) collect(ctx context.Context, trip Trip) []Option {
+func (p Planner) collect(ctx context.Context, query Query, avoid map[ModeName]bool) Network {
 	timeout := p.ModeTimeout
 	if timeout <= 0 {
 		timeout = 3 * time.Second
@@ -159,23 +157,27 @@ func (p Planner) collect(ctx context.Context, trip Trip) []Option {
 	defer cancel()
 	var mutex sync.Mutex
 	var group sync.WaitGroup
-	var options []Option
+	var network Network
 	for _, mode := range p.Modes {
+		if avoid[mode.Name()] {
+			continue
+		}
 		group.Add(1)
 		go func(mode Mode) {
 			defer group.Done()
 			started := time.Now()
-			found, err := mode.Options(modeCtx, trip)
+			found, err := mode.Network(modeCtx, query)
 			if err != nil {
 				log.Printf("mode %s: %v after %s", mode.Name(), err, time.Since(started).Round(time.Millisecond))
 				return
 			}
-			log.Printf("mode %s: %d options in %s", mode.Name(), len(found), time.Since(started).Round(time.Millisecond))
+			log.Printf("mode %s: %d rides, %d rentals in %s", mode.Name(), len(found.Rides), len(found.Rentals), time.Since(started).Round(time.Millisecond))
 			mutex.Lock()
-			options = append(options, found...)
+			network.Rides = append(network.Rides, found.Rides...)
+			network.Rentals = append(network.Rentals, found.Rentals...)
 			mutex.Unlock()
 		}(mode)
 	}
 	group.Wait()
-	return options
+	return network
 }

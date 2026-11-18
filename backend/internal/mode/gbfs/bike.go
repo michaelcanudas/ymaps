@@ -5,7 +5,6 @@ import (
 	"math"
 	"time"
 
-	"ymaps/backend/internal/geo"
 	"ymaps/backend/internal/plan"
 	"ymaps/backend/internal/streets"
 )
@@ -13,27 +12,24 @@ import (
 const rideNewHavenDiscovery = "https://gbfs.dropmobility.com/systems/newhaven/gbfs.json"
 
 const (
-	bikeSpeedKmh      = 15.0
-	bikeLateSpeedKmh  = 12.0
-	bikeUnlockCents   = 100
-	bikeMinuteCents   = 25
-	minimumRideMeters = 100.0
+	bikeSpeedKmh    = 13.0
+	bikeUnlockCents = 100
+	bikeMinuteCents = 25
 )
 
 var bikeProfile = streets.Profile{Kind: streets.Bicycle, SpeedKmh: bikeSpeedKmh}
 
 type BikeMode struct {
-	streets streets.Streets
-	reader  *Reader
-	now     func() time.Time
+	reader *Reader
+	now    func() time.Time
 }
 
-func NewBike(s streets.Streets, key string) *BikeMode {
-	return newBike(s, key, rideNewHavenDiscovery)
+func NewBike(key string) *BikeMode {
+	return newBike(key, rideNewHavenDiscovery)
 }
 
-func newBike(s streets.Streets, key, discoveryURL string) *BikeMode {
-	mode := &BikeMode{streets: s, now: time.Now}
+func newBike(key, discoveryURL string) *BikeMode {
+	mode := &BikeMode{now: time.Now}
 	if key == "" {
 		return mode
 	}
@@ -63,120 +59,50 @@ func (m *BikeMode) Run(ctx context.Context) {
 	m.reader.Run(ctx)
 }
 
-type bikePickup struct {
-	point plan.Point
-	bikes int
-}
-
-func (m *BikeMode) Options(ctx context.Context, trip plan.Trip) ([]plan.Option, error) {
+func (m *BikeMode) Network(_ context.Context, query plan.Query) (plan.Network, error) {
 	if m.reader == nil {
-		return nil, nil
+		return plan.Network{}, nil
 	}
 	snapshot := m.reader.Fresh(m.now())
 	if snapshot == nil {
-		return nil, nil
+		return plan.Network{}, nil
 	}
-	pickups := nearestPickups(snapshot, trip.Origin.At)
-	dropoffs := nearestReturns(snapshot, trip.Destination.At)
-	if len(pickups) == 0 || len(dropoffs) == 0 {
-		return nil, nil
-	}
-	pickupPoints := make([]geo.LatLon, len(pickups))
-	for i, pickup := range pickups {
-		pickupPoints[i] = pickup.point.At
-	}
-	dropoffPoints := make([]geo.LatLon, len(dropoffs))
-	for i, dropoff := range dropoffs {
-		dropoffPoints[i] = dropoff.At
-	}
-	walkIn, walkOut, err := walkTimes(ctx, m.streets, trip.Origin.At, pickupPoints, dropoffPoints, trip.Destination.At)
-	if err != nil {
-		return nil, err
-	}
-	rides, err := m.streets.Matrix(ctx, pickupPoints, dropoffPoints, bikeProfile)
-	if err != nil {
-		return nil, err
-	}
-	pairs := bestPairs(len(pickups), len(dropoffs), func(i, j int) (time.Duration, bool) {
-		if geo.Distance(pickupPoints[i], dropoffPoints[j]) < minimumRideMeters {
-			return 0, false
-		}
-		late := scaleDuration(walkIn[i], estimatedLateWalk) + bikeLate(rides[i][j]) + loneVehicleRisk(walkIn[i], pickups[i].bikes) + scaleDuration(walkOut[j], estimatedLateWalk)
-		return late, true
-	})
-	var options []plan.Option
-	for _, chosen := range pairs {
-		pickup := pickups[chosen.pickup]
-		dropoff := dropoffs[chosen.dropoff]
-		trace, err := m.streets.Route(ctx, pickup.point.At, dropoff.At, bikeProfile)
-		if err != nil {
+	rental := plan.Rental{Mode: plan.Bike}
+	for _, station := range snapshot.Stations {
+		if !query.Covers(station.At) {
 			continue
 		}
-		rideP50 := trace.Duration + unlockAndParkP50
-		rideP90 := bikeLate(trace.Duration) + loneVehicleRisk(walkIn[chosen.pickup], pickup.bikes)
-		bikes := pickup.bikes
-		leg := plan.Leg{
-			Mode:           plan.Bike,
-			From:           pickup.point,
-			To:             dropoff,
-			CostCents:      bikeCents(rideP50),
-			Path:           trace.Path,
-			BikesAvailable: &bikes,
+		if station.Renting && station.BikesAvailable > 0 {
+			bikes := station.BikesAvailable
+			rental.Pickups = append(rental.Pickups, bikePickup(stationPoint(station), &bikes))
 		}
-		option, err := assemble(ctx, m.streets, trip, leg, rideP50, rideP90)
-		if err != nil {
-			continue
+		if station.Returning {
+			rental.Dropoffs = append(rental.Dropoffs, stationPoint(station))
 		}
-		options = append(options, option)
 	}
-	return options, nil
+	for _, vehicle := range snapshot.Vehicles {
+		if query.Covers(vehicle.At) {
+			rental.Pickups = append(rental.Pickups, bikePickup(plan.Point{ID: "bike:" + vehicle.ID, Name: "Bike", At: vehicle.At}, nil))
+		}
+	}
+	if len(rental.Pickups) == 0 || len(rental.Dropoffs) == 0 {
+		return plan.Network{}, nil
+	}
+	return plan.Network{Rentals: []plan.Rental{rental}}, nil
 }
 
-func bikeLate(ride time.Duration) time.Duration {
-	return scaleDuration(ride, bikeSpeedKmh/bikeLateSpeedKmh) + unlockAndParkP90
+func bikePickup(point plan.Point, bikes *int) plan.Pickup {
+	return plan.Pickup{
+		Point:          point,
+		BikesAvailable: bikes,
+		Profile:        bikeProfile,
+		Unlock:         bikeUnlockAndPark,
+		Cost:           bikeCents,
+	}
 }
 
 func bikeCents(ride time.Duration) int {
 	return bikeUnlockCents + bikeMinuteCents*int(math.Ceil(ride.Minutes()))
-}
-
-func nearestPickups(snapshot *Snapshot, origin geo.LatLon) []bikePickup {
-	var candidates []bikePickup
-	for _, station := range snapshot.Stations {
-		if station.Renting && station.BikesAvailable > 0 {
-			candidates = append(candidates, bikePickup{point: stationPoint(station), bikes: station.BikesAvailable})
-		}
-	}
-	for _, vehicle := range snapshot.Vehicles {
-		candidates = append(candidates, bikePickup{point: plan.Point{ID: "bike:" + vehicle.ID, Name: "Bike", At: vehicle.At}, bikes: 1})
-	}
-	points := make([]geo.LatLon, len(candidates))
-	for i, candidate := range candidates {
-		points[i] = candidate.point.At
-	}
-	var chosen []bikePickup
-	for _, index := range nearestIndices(points, origin, candidatesPerEnd) {
-		chosen = append(chosen, candidates[index])
-	}
-	return chosen
-}
-
-func nearestReturns(snapshot *Snapshot, destination geo.LatLon) []plan.Point {
-	var candidates []plan.Point
-	for _, station := range snapshot.Stations {
-		if station.Returning {
-			candidates = append(candidates, stationPoint(station))
-		}
-	}
-	points := make([]geo.LatLon, len(candidates))
-	for i, candidate := range candidates {
-		points[i] = candidate.At
-	}
-	var chosen []plan.Point
-	for _, index := range nearestIndices(points, destination, candidatesPerEnd) {
-		chosen = append(chosen, candidates[index])
-	}
-	return chosen
 }
 
 func stationPoint(station Station) plan.Point {

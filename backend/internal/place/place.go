@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math"
 	"sort"
 	"strings"
 
@@ -101,22 +102,78 @@ func decided(candidates []Candidate) (Candidate, bool) {
 	if best.Confidence < clearConfidence {
 		return Candidate{}, false
 	}
-	if len(sorted) > 1 && best.Confidence-sorted[1].Confidence < clearMargin && sorted[1].Place.ID != best.Place.ID {
-		return Candidate{}, false
+	for _, other := range sorted[1:] {
+		if best.Confidence-other.Confidence >= clearMargin {
+			break
+		}
+		if !same(best.Place, other.Place) {
+			return Candidate{}, false
+		}
 	}
 	return best, true
 }
 
-func rank(candidates []Candidate, near geo.LatLon) []Candidate {
-	seen := map[string]bool{}
-	var unique []Candidate
-	for _, candidate := range candidates {
-		if seen[candidate.Place.ID] {
+const (
+	sameMeters = 150.0
+	farMeters  = 5000.0
+	farRatio   = 3.0
+)
+
+func nearby(candidates []Candidate, near geo.LatLon) []Candidate {
+	if near == (geo.LatLon{}) || len(candidates) < 2 {
+		return candidates
+	}
+	closest := -1.0
+	for _, c := range candidates {
+		if c.Confidence < clearConfidence-0.1 {
 			continue
 		}
-		seen[candidate.Place.ID] = true
-		unique = append(unique, candidate)
+		if d := geo.Distance(near, c.Place.At); closest < 0 || d < closest {
+			closest = d
+		}
 	}
+	if closest < 0 {
+		return candidates
+	}
+	limit := math.Max(farMeters, farRatio*closest)
+	var kept []Candidate
+	for _, c := range candidates {
+		if geo.Distance(near, c.Place.At) <= limit || c.Place.Source != Google {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
+
+func same(a, b Place) bool {
+	if a.ID == b.ID {
+		return true
+	}
+	if geo.Distance(a.At, b.At) > sameMeters {
+		return false
+	}
+	x, y := strings.ToLower(a.Name), strings.ToLower(b.Name)
+	return x == y || strings.Contains(x, y) || strings.Contains(y, x)
+}
+
+func rank(candidates []Candidate, near geo.LatLon) []Candidate {
+	var unique []Candidate
+	for _, candidate := range candidates {
+		duplicate := false
+		for i, kept := range unique {
+			if same(kept.Place, candidate.Place) {
+				duplicate = true
+				if candidate.Confidence > kept.Confidence {
+					unique[i].Confidence = candidate.Confidence
+				}
+				break
+			}
+		}
+		if !duplicate {
+			unique = append(unique, candidate)
+		}
+	}
+	unique = nearby(unique, near)
 	sort.SliceStable(unique, func(i, j int) bool {
 		if unique[i].Confidence != unique[j].Confidence {
 			return unique[i].Confidence > unique[j].Confidence

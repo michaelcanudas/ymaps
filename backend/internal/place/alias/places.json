@@ -6,7 +6,7 @@
   {"id": "beinecke", "name": "Beinecke Rare Book and Manuscript Library", "lat": 41.31160, "lon": -72.92732, "terms": ["beinecke", "beinecke library", "beinecke plaza"]},
   {"id": "cross-campus", "name": "Cross Campus", "lat": 41.31046, "lon": -72.92714, "terms": ["cross campus", "xc"]},
   {"id": "old-campus", "name": "Old Campus", "lat": 41.30875, "lon": -72.92865, "terms": ["old campus", "oc"]},
-  {"id": "science-hill", "name": "Science Hill", "lat": 41.31724, "lon": -72.92255, "terms": ["science hill", "sci hill", "kline tower", "kbt", "kline biology tower"]},
+  {"id": "science-hill", "name": "Science Hill", "lat": 41.31724, "lon": -72.92255, "terms": ["science hill", "sci hill"]},
   {"id": "payne-whitney", "name": "Payne Whitney Gymnasium", "lat": 41.31372, "lon": -72.93109, "terms": ["payne whitney", "pwg", "payne whitney gym", "payne whitney gymnasium", "the gym", "gym"]},
   {"id": "art-gallery", "name": "Yale University Art Gallery", "lat": 41.30844, "lon": -72.93088, "terms": ["yuag", "art gallery", "yale art gallery", "yale university art gallery"]},
   {"id": "yale-health", "name": "Yale Health Center", "lat": 41.31573, "lon": -72.92752, "terms": ["yale health", "yale health center", "health center"]},
@@ -23,5 +23,9 @@
   {"id": "saybrook", "name": "Saybrook College", "lat": 41.31015, "lon": -72.92915, "terms": ["saybrook", "saybrook college", "saybrook buttery", "saybrook dining hall"]},
   {"id": "silliman", "name": "Silliman College", "lat": 41.31045, "lon": -72.92498, "terms": ["silliman", "silliman college", "silliman buttery", "silliman dining hall"]},
   {"id": "timothy-dwight", "name": "Timothy Dwight College", "lat": 41.31034, "lon": -72.92365, "terms": ["td", "timothy dwight", "timothy dwight college", "td buttery", "timothy dwight buttery", "td dining hall"]},
-  {"id": "trumbull", "name": "Trumbull College", "lat": 41.31070, "lon": -72.92957, "terms": ["trumbull", "trumbull college", "trumbull buttery", "trumbull dining hall"]}
+  {"id": "trumbull", "name": "Trumbull College", "lat": 41.31070, "lon": -72.92957, "terms": ["trumbull", "trumbull college", "trumbull buttery", "trumbull dining hall"]},
+  {"id": "union-station", "name": "New Haven Union Station", "address": "50 Union Avenue", "lat": 41.29768, "lon": -72.92668, "terms": ["union station", "new haven union station", "union station new haven", "train station", "the train station", "amtrak", "metro north"]},
+  {"id": "state-street-station", "name": "New Haven State Street Station", "address": "370 State Street", "lat": 41.30525, "lon": -72.92201, "terms": ["state street station", "state st station", "state street"]},
+  {"id": "west-campus", "name": "Yale West Campus", "address": "800 West Campus Drive", "lat": 41.258392, "lon": -72.989197, "terms": ["west campus", "yale west campus"]},
+  {"id": "kline-tower", "name": "Kline Tower", "address": "219 Prospect Street", "lat": 41.317284, "lon": -72.922417, "entryway": {"name": "Kline Tower entrance", "lat": 41.317371, "lon": -72.922691}, "terms": ["kbt", "kline biology tower"]}
 ]

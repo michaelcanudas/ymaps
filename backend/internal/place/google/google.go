@@ -18,8 +18,9 @@ import (
 
 const (
 	defaultBase       = "https://places.googleapis.com/v1"
-	searchFieldMask   = "places.id,places.displayName,places.formattedAddress,places.location"
-	lookupFieldMask   = "id,displayName,formattedAddress,location"
+	searchFieldMask   = "places.id,places.displayName,places.formattedAddress,places.location,places.primaryType"
+	lookupFieldMask   = "id,displayName,formattedAddress,location,primaryType"
+	sameSpotMeters    = 60.0
 	biasRadiusMeters  = 5000.0
 	pageSize          = 5
 	matchedConfidence = 0.7
@@ -70,6 +71,7 @@ type result struct {
 	} `json:"displayName"`
 	FormattedAddress string `json:"formattedAddress"`
 	Location         latLng `json:"location"`
+	PrimaryType      string `json:"primaryType"`
 }
 
 type searchResponse struct {
@@ -101,14 +103,12 @@ func (r *Resolver) Resolve(ctx context.Context, query string, near geo.LatLon) (
 	if err := r.do(httpRequest, &response); err != nil {
 		return nil, err
 	}
-	candidates := make([]place.Candidate, 0, len(response.Places))
-	for index, found := range response.Places {
-		if found.ID == "" {
-			continue
-		}
+	merged := merge(response.Places)
+	candidates := make([]place.Candidate, 0, len(merged))
+	for index, found := range merged {
 		candidates = append(candidates, place.Candidate{
-			Place:      found.place(),
-			Confidence: confidence(index, len(response.Places), query, found.DisplayName.Text),
+			Place:      found,
+			Confidence: confidence(index, len(merged), query, found.Name),
 		})
 	}
 	return candidates, nil
@@ -151,10 +151,63 @@ func (r *Resolver) do(request *http.Request, into any) error {
 	return json.NewDecoder(response.Body).Decode(into)
 }
 
+func merge(results []result) []place.Place {
+	var places []place.Place
+	for _, found := range results {
+		if found.ID == "" {
+			continue
+		}
+		candidate := found.place()
+		joined := false
+		for i := range places {
+			if geo.Distance(places[i].At, candidate.At) <= sameSpotMeters {
+				if moreSpecific(candidate.Name, places[i].Name, places[i].Address) {
+					places[i].Name = candidate.Name
+				}
+				joined = true
+				break
+			}
+		}
+		if !joined {
+			places = append(places, candidate)
+		}
+	}
+	return places
+}
+
+func moreSpecific(name, current, address string) bool {
+	city := locality(address)
+	if strings.EqualFold(name, city) {
+		return false
+	}
+	if strings.EqualFold(current, city) || strings.HasSuffix(current, " Station") && strings.EqualFold(strings.TrimSuffix(current, " Station"), city) {
+		return true
+	}
+	return len(strings.Fields(name)) > len(strings.Fields(current))
+}
+
+func locality(address string) string {
+	parts := strings.Split(address, ", ")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[len(parts)-3]
+}
+
+var stationTypes = map[string]bool{"train_station": true, "transit_station": true, "subway_station": true, "bus_station": true}
+
+func (found result) name() string {
+	name := found.DisplayName.Text
+	if stationTypes[found.PrimaryType] && strings.EqualFold(name, locality(found.FormattedAddress)) {
+		return name + " Station"
+	}
+	return name
+}
+
 func (found result) place() place.Place {
 	return place.Place{
 		ID:      string(place.Google) + ":" + found.ID,
-		Name:    found.DisplayName.Text,
+		Name:    found.name(),
 		Address: found.FormattedAddress,
 		At:      geo.LatLon{Lat: found.Location.Latitude, Lon: found.Location.Longitude},
 		Source:  place.Google,

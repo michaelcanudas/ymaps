@@ -12,12 +12,14 @@ import (
 	"ymaps/backend/internal/mode/shuttle"
 	"ymaps/backend/internal/place"
 	"ymaps/backend/internal/place/alias"
+	"ymaps/backend/internal/place/course"
 	"ymaps/backend/internal/place/google"
 	"ymaps/backend/internal/place/yalemap"
 	"ymaps/backend/internal/plan"
 	"ymaps/backend/internal/server"
 	"ymaps/backend/internal/streets"
 	"ymaps/backend/internal/streets/valhalla"
+	"ymaps/backend/internal/veospots"
 )
 
 func main() {
@@ -38,24 +40,28 @@ func main() {
 
 	places := place.Chain{
 		alias.New(),
+		course.New(yale),
 		yale,
 		google.New(os.Getenv("GOOGLE_MAPS_KEY")),
 	}
 
+	veoSpots := veospots.New(os.Getenv("VEO_SPOTS_PATH"))
+	veo := gbfs.NewVeo(veoSpots)
+
 	planner := plan.Planner{
-		Streets:        roads,
-		CentsPerMinute: 50,
-		ModeTimeout:    3 * time.Second,
+		Streets:     roads,
+		ModeTimeout: 3 * time.Second,
 		Modes: []plan.Mode{
-			shuttle.New(roads),
-			bus.New(roads),
-			gbfs.NewBike(roads, os.Getenv("RIDE_NEW_HAVEN_GBFS_KEY")),
-			gbfs.NewVeo(roads),
+			shuttle.New(),
+			bus.New(),
+			gbfs.NewBike(os.Getenv("RIDE_NEW_HAVEN_GBFS_KEY")),
+			veo,
 		},
 	}
 	planner.Run(ctx)
+	go veoSpots.Run(ctx, veo.Reader())
 
-	routes := &server.Routes{Places: places, Planner: planner}
+	routes := &server.Routes{Places: places, Planner: planner, Debug: veoSpots.DebugHandler()}
 	log.Fatal(server.Listen(listenAddress(), routes))
 }
 
