@@ -4,7 +4,7 @@ Walter owns `frontend/` and every surface around it: the mobile app, Siri, the w
 
 ## Stack
 
-Walter chooses the stack. The working assumption is React Native for the app, with the Apple surfaces beside it. Document the choice in `frontend/README.md` when the app exists.
+Expo (React Native + web) with MapLibre and OpenFreeMap tiles. The web app ships first, and the Apple surfaces come later. Details are in `frontend/README.md`.
 
 ## Rules
 
@@ -17,4 +17,6 @@ Walter chooses the stack. The working assumption is React Native for the app, wi
 
 ## Current server
 
-`GET http://localhost:8080/v1/hello` → `{"message":"hello"}`.
+Deployed: `https://backend-production-95061b6f.up.railway.app`. Local: `http://localhost:8080`.
+
+The client calls `POST /v1/routes` and `GET /v1/routes/{routeId}`. See `contract/openapi.yaml`.

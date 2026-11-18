@@ -8,12 +8,13 @@ struct DestinationLiveActivity: Widget {
             HStack(spacing: 12) {
                 Image(systemName: context.state.symbol)
                     .font(.title3)
+                    .foregroundStyle(Brand.color(forMode: context.state.mode))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(context.attributes.destination)
                         .font(.headline)
                     Text(context.state.step)
                         .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(Brand.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -24,19 +25,24 @@ struct DestinationLiveActivity: Widget {
                         .frame(width: 72, alignment: .trailing)
                     Text(context.state.arriveAt, style: .time)
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(Brand.textSecondary)
                 }
             }
             .padding(16)
-            .foregroundStyle(.white)
-            .activityBackgroundTint(.black)
-            .activitySystemActionForegroundColor(.white)
+            .foregroundStyle(Brand.textPrimary)
+            .activityBackgroundTint(Brand.ink)
+            .activitySystemActionForegroundColor(Brand.textPrimary)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(context.attributes.destination, systemImage: context.state.symbol)
-                        .font(.headline)
-                        .lineLimit(1)
+                    Label {
+                        Text(context.attributes.destination)
+                    } icon: {
+                        Image(systemName: context.state.symbol)
+                            .foregroundStyle(Brand.color(forMode: context.state.mode))
+                    }
+                    .font(.headline)
+                    .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Text(context.state.arriveAt, style: .time)
@@ -50,13 +56,16 @@ struct DestinationLiveActivity: Widget {
                 }
             } compactLeading: {
                 Image(systemName: context.state.symbol)
+                    .foregroundStyle(Brand.color(forMode: context.state.mode))
             } compactTrailing: {
                 Text(timerInterval: Date.now...max(Date.now, context.state.arriveAt), countsDown: true, showsHours: false)
                     .monospacedDigit()
                     .frame(width: 44)
             } minimal: {
                 Image(systemName: context.state.symbol)
+                    .foregroundStyle(Brand.color(forMode: context.state.mode))
             }
+            .keylineTint(Brand.accent)
         }
     }
 }

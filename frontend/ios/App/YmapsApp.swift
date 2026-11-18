@@ -10,6 +10,7 @@ struct YmapsApp: App {
             RootView(searchRequest: $searchRequest)
                 .environment(trip)
                 .preferredColorScheme(.dark)
+                .tint(Brand.accent)
                 .onOpenURL { url in
                     if url.host() == "search" {
                         searchRequest += 1

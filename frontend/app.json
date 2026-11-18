@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "ymaps",
+    "slug": "ymaps",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#070F1F",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "name": "ymaps",
+      "shortName": "ymaps",
+      "themeColor": "#070F1F",
+      "backgroundColor": "#0E1A2E"
+    },
+    "backgroundColor": "#0E1A2E"
+  }
+}

@@ -11,6 +11,8 @@ Config/    signing settings, the app Info.plist additions, and the widget Info.p
 
 The folders are synchronized groups, so a new Swift file dropped into a folder joins its target without touching the project file.
 
+`Shared/Brand.swift` holds the navy palette and the per-mode colors shared with the web app. `App/Vehicles.xcassets` holds the 3D vehicle sprites and mode icons; regenerate it with `python ../../../icons/build/export_to_ios.py`.
+
 ## Signing
 
 `Config/Signing.xcconfig` is checked in with no team. Create `Config/Signing.local.xcconfig`, which git ignores:

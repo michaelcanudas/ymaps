@@ -6,6 +6,7 @@ struct DestinationActivityAttributes: ActivityAttributes {
         var arriveAt: Date
         var step: String
         var symbol: String
+        var mode: String
     }
 
     var destination: String

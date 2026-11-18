@@ -4,6 +4,8 @@ ymaps gets a Yale student the optimal route in the fastest time.
 
 Two people build it in this repo. Michael owns `backend/`. Walter owns `frontend/`. They meet only through `contract/openapi.yaml`.
 
+![Brand and visual direction](<Screenshot 2026-11-17 190945.png>)
+
 ## Start here
 
 1. [AGENTS.md](AGENTS.md) if you are an agent
