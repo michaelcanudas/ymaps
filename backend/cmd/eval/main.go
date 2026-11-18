@@ -428,7 +428,7 @@ func (s *shuttleState) obvious(origin, destination coordinate, walkOnly time.Dur
 				alightETAs := s.etasAt(alight.ID)
 				for _, bus := range buses {
 					leaves, ok := boardETAs[bus]
-					if !ok || leaves.Before(now.Add(access)) || leaves.After(now.Add(access+8*time.Minute)) {
+					if !ok || leaves.Before(now.Add(access+time.Minute)) || leaves.After(now.Add(access+8*time.Minute)) {
 						continue
 					}
 					arrives, ok := alightETAs[bus]

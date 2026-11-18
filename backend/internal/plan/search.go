@@ -22,7 +22,9 @@ const (
 	bagLimit              = 24
 	pruneSlack            = 10 * time.Minute
 	preferencePruneSlack  = 60 * time.Minute
-	candidatesKept        = 14
+	candidatesKept        = 20
+	candidatesPerKind     = 3
+	arrivalLimit          = 200
 	walkDetour            = 1.3
 	minimumRide           = 3 * time.Minute
 )
@@ -73,6 +75,10 @@ func (a *label) dominates(b *label) bool {
 type bag []*label
 
 func (b *bag) add(l *label) bool {
+	return b.addWithin(l, bagLimit)
+}
+
+func (b *bag) addWithin(l *label, limit int) bool {
 	for _, existing := range *b {
 		if existing.dominates(l) {
 			return false
@@ -85,9 +91,9 @@ func (b *bag) add(l *label) bool {
 		}
 	}
 	kept = append(kept, l)
-	if len(kept) > bagLimit {
+	if len(kept) > limit {
 		sort.Slice(kept, func(i, j int) bool { return kept[i].arrive.Before(kept[j].arrive) })
-		kept = kept[:bagLimit]
+		kept = kept[:limit]
 	}
 	*b = kept
 	return true
@@ -359,7 +365,7 @@ func (s *search) reach(from *label) {
 	if !n.hasEgress {
 		return
 	}
-	s.arrivals.add(&label{
+	s.arrivals.addWithin(&label{
 		node:   destinationNode,
 		arrive: from.arrive.Add(n.egress),
 		walk:   from.walk + n.egress,
@@ -370,7 +376,7 @@ func (s *search) reach(from *label) {
 		rented: from.rented,
 		step:   step{kind: walking, from: from.node, walk: n.egress},
 		prev:   from,
-	})
+	}, arrivalLimit)
 }
 
 func (s *search) run(ctx context.Context) ([]*label, error) {
@@ -386,7 +392,7 @@ func (s *search) run(ctx context.Context) ([]*label, error) {
 			step:   step{kind: walking, from: originNode, walk: d.access},
 			prev:   start,
 		}
-		s.arrivals.add(s.direct)
+		s.arrivals.addWithin(s.direct, arrivalLimit)
 	}
 	previous := round{}
 	for i := destinationNode + 1; i < len(s.nodes); i++ {
@@ -410,11 +416,7 @@ func (s *search) run(ctx context.Context) ([]*label, error) {
 		s.transfer(current)
 		previous = current
 	}
-	found := append([]*label{}, s.arrivals...)
-	sort.Slice(found, func(i, j int) bool { return found[i].arrive.Before(found[j].arrive) })
-	if len(found) > candidatesKept {
-		found = found[:candidatesKept]
-	}
+	found := diverse(s.arrivals)
 	if s.direct != nil {
 		kept := false
 		for _, l := range found {
@@ -600,4 +602,42 @@ func (s *search) transfer(current round) {
 			})
 		}
 	}
+}
+
+func signature(l *label) string {
+	modes := map[ModeName]bool{}
+	for current := l; current != nil; current = current.prev {
+		switch current.step.kind {
+		case riding:
+			modes[current.step.ride.Mode] = true
+		case renting:
+			modes[current.step.mode] = true
+		}
+	}
+	key := ""
+	for _, mode := range []ModeName{Shuttle, Bus, Bike, Veo} {
+		if modes[mode] {
+			key += string(mode) + "+"
+		}
+	}
+	return key
+}
+
+func diverse(arrivals bag) []*label {
+	sorted := append([]*label{}, arrivals...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].arrive.Before(sorted[j].arrive) })
+	perKind := map[string]int{}
+	var found []*label
+	for _, l := range sorted {
+		key := signature(l)
+		if perKind[key] == candidatesPerKind {
+			continue
+		}
+		perKind[key]++
+		found = append(found, l)
+		if len(found) == candidatesKept {
+			break
+		}
+	}
+	return found
 }
