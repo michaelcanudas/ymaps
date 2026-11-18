@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: ymaps
-  version: 0.3.0
+  version: 0.4.0
   description: |
     The only interface between the ymaps backend and its frontends.
     The server implements this file. Clients call only these operations.
@@ -36,7 +36,7 @@ paths:
               $ref: "#/components/schemas/RouteRequest"
       responses:
         "200":
-          description: The best route to the resolved place.
+          description: The chosen route to the resolved place, with alternatives the student may switch to.
           content:
             application/json:
               schema:
@@ -242,6 +242,27 @@ components:
           minItems: 1
           items:
             $ref: "#/components/schemas/Leg"
+        label:
+          type: string
+          description: |
+            How this alternative trades off against the main route, written for the student,
+            e.g. "Free · 4 min slower", "6 min faster · $4.47", "7 min less walking · $2.75". Absent on the main route.
+        kind:
+          type: string
+          description: What this alternative offers over the main route. Absent on the main route.
+          enum:
+            - free
+            - faster
+            - lessWalking
+            - cheaper
+        alternatives:
+          type: array
+          maxItems: 2
+          description: |
+            Up to two other routes that differ meaningfully from this one and are better on at least one of arrival, walking, or cost.
+            Each has its own `id`; refreshing that id keeps the same kind of trade-off. Empty on an alternative.
+          items:
+            $ref: "#/components/schemas/Route"
     Point:
       type: object
       additionalProperties: false

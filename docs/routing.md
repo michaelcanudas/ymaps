@@ -127,6 +127,10 @@ There is no exchange rate between minutes and money. The planner picks a route b
 
 Night is after dusk and before dawn in New Haven, by month.
 
+### Alternatives
+
+Besides the chosen route, the response offers up to two alternatives from the routes the search kept, in this order of kinds: free (when the chosen route costs money), faster by 3 minutes or more, 5 or more minutes less walking, and cheaper by a dollar or more but at most 8 minutes slower. An alternative must be better than the chosen route on arrival, walking, or cost, arrive within 15 minutes of it, and differ meaningfully from it and from the other alternative: other modes, or 3 minutes, a dollar, or 5 walking minutes apart. Each carries a label such as "Free · 4 min slower". Refreshing an alternative's id returns the current route of the same kind, or the chosen route when none is left.
+
 A request may carry `preferences`: most walking minutes, most cost in cents (0 for free only), and modes to avoid. They are hard limits. When no route meets them, the default route is returned.
 
 ### Estimates

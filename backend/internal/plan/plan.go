@@ -110,6 +110,11 @@ func (p Planner) Run(ctx context.Context) {
 }
 
 func (p Planner) Plan(ctx context.Context, trip Trip) (Option, error) {
+	choice, err := p.Choose(ctx, trip)
+	return choice.Route, err
+}
+
+func (p Planner) Choose(ctx context.Context, trip Trip) (Choice, error) {
 	horizon := p.Horizon
 	if horizon <= 0 {
 		horizon = defaultHorizon
@@ -124,20 +129,23 @@ func (p Planner) Plan(ctx context.Context, trip Trip) (Option, error) {
 	s := newSearch(p.Streets, trip, network)
 	candidates, err := s.run(ctx)
 	if err != nil {
-		return Option{}, err
+		return Choice{}, err
 	}
 	options := materializeAll(ctx, p.Streets, trip, candidates)
 	policy := policyAt(trip.DepartAt)
 	for _, c := range options {
 		log.Printf("candidate %s", policy.describe(c, trip.DepartAt))
 	}
-	if best, ok := policy.choose(options, trip.Preferences); ok {
-		return best.option, nil
+	prefs := trip.Preferences
+	best, ok := policy.choose(options, prefs)
+	if !ok {
+		prefs = Preferences{}
+		best, ok = policy.choose(options, prefs)
 	}
-	if best, ok := policy.choose(options, Preferences{}); ok {
-		return best.option, nil
+	if !ok {
+		return Choice{}, ErrNoRoute
 	}
-	return Option{}, ErrNoRoute
+	return Choice{Route: best.option, Alternatives: policy.alternatives(best, options, prefs)}, nil
 }
 
 func (p Planner) collect(ctx context.Context, query Query, avoid map[ModeName]bool) Network {

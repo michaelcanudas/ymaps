@@ -23,7 +23,7 @@ type Places interface {
 }
 
 type Planner interface {
-	Plan(ctx context.Context, trip plan.Trip) (plan.Option, error)
+	Choose(ctx context.Context, trip plan.Trip) (plan.Choice, error)
 }
 
 type Routes struct {
@@ -39,6 +39,7 @@ const routeLifetime = 3 * time.Hour
 type storedRoute struct {
 	place       place.Place
 	preferences plan.Preferences
+	kind        plan.Kind
 	expires     time.Time
 }
 
@@ -145,13 +146,16 @@ type LegBody struct {
 }
 
 type RouteBody struct {
-	ID         string    `json:"id"`
-	Place      PlaceBody `json:"place"`
-	ComputedAt time.Time `json:"computedAt"`
-	DepartAt   time.Time `json:"departAt"`
-	ArriveAt   time.Time `json:"arriveAt"`
-	CostCents  int       `json:"costCents"`
-	Legs       []LegBody `json:"legs"`
+	ID           string      `json:"id"`
+	Place        PlaceBody   `json:"place"`
+	ComputedAt   time.Time   `json:"computedAt"`
+	DepartAt     time.Time   `json:"departAt"`
+	ArriveAt     time.Time   `json:"arriveAt"`
+	CostCents    int         `json:"costCents"`
+	Legs         []LegBody   `json:"legs"`
+	Label        string      `json:"label,omitempty"`
+	Kind         string      `json:"kind,omitempty"`
+	Alternatives []RouteBody `json:"alternatives"`
 }
 
 type ErrorBody struct {
@@ -205,12 +209,11 @@ func (r *Routes) plan(w http.ResponseWriter, request *http.Request) {
 		resolved = *best
 	}
 	id := newRouteID()
-	route, err := r.route(ctx, id, origin, resolved, preferences)
+	route, err := r.route(ctx, id, origin, storedRoute{place: resolved, preferences: preferences})
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, UnresolvedBody{Destination: body.Destination, Places: []PlaceBody{}})
 		return
 	}
-	r.store.put(id, storedRoute{place: resolved, preferences: preferences, expires: r.now().Add(routeLifetime)})
 	writeJSON(w, http.StatusOK, route)
 }
 
@@ -227,7 +230,7 @@ func (r *Routes) refresh(w http.ResponseWriter, request *http.Request) {
 		writeJSON(w, http.StatusNotFound, ErrorBody{Message: "route not found"})
 		return
 	}
-	route, err := r.route(request.Context(), id, geo.LatLon{Lat: lat, Lon: lon}, entry.place, entry.preferences)
+	route, err := r.route(request.Context(), id, geo.LatLon{Lat: lat, Lon: lon}, entry)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, ErrorBody{Message: "no route from here"})
 		return
@@ -235,34 +238,59 @@ func (r *Routes) refresh(w http.ResponseWriter, request *http.Request) {
 	writeJSON(w, http.StatusOK, route)
 }
 
-func (r *Routes) route(ctx context.Context, id string, origin geo.LatLon, destination place.Place, preferences plan.Preferences) (RouteBody, error) {
+func (r *Routes) route(ctx context.Context, id string, origin geo.LatLon, entry storedRoute) (RouteBody, error) {
 	now := r.now()
+	destination := entry.place
 	trip := plan.Trip{
 		Origin:      plan.Point{Name: "Current location", At: origin},
 		Destination: plan.Point{ID: destination.ID, Name: destinationName(destination), At: destination.Arrival()},
 		DepartAt:    now,
-		Preferences: preferences,
+		Preferences: entry.preferences,
 	}
-	option, err := r.Planner.Plan(ctx, trip)
+	choice, err := r.Planner.Choose(ctx, trip)
 	if err != nil {
 		return RouteBody{}, err
 	}
-	if len(option.Legs) == 0 {
+	if len(choice.Route.Legs) == 0 {
 		return RouteBody{}, errors.New("empty route")
 	}
+	expires := now.Add(routeLifetime)
+	r.store.put(id, storedRoute{place: destination, preferences: entry.preferences, kind: entry.kind, expires: expires})
+	if entry.kind != "" {
+		for _, alternative := range choice.Alternatives {
+			if alternative.Kind == entry.kind {
+				body := routeBody(id, destination, now, alternative.Option)
+				body.Kind, body.Label = string(alternative.Kind), alternative.Label
+				return body, nil
+			}
+		}
+	}
+	body := routeBody(id, destination, now, choice.Route)
+	for _, alternative := range choice.Alternatives {
+		alternativeID := newRouteID()
+		r.store.put(alternativeID, storedRoute{place: destination, preferences: entry.preferences, kind: alternative.Kind, expires: expires})
+		extra := routeBody(alternativeID, destination, now, alternative.Option)
+		extra.Kind, extra.Label = string(alternative.Kind), alternative.Label
+		body.Alternatives = append(body.Alternatives, extra)
+	}
+	return body, nil
+}
+
+func routeBody(id string, destination place.Place, now time.Time, option plan.Option) RouteBody {
 	legs := make([]LegBody, 0, len(option.Legs))
 	for _, leg := range option.Legs {
 		legs = append(legs, legBody(leg))
 	}
 	return RouteBody{
-		ID:         id,
-		Place:      placeBody(destination),
-		ComputedAt: now.UTC(),
-		DepartAt:   option.DepartAt().UTC(),
-		ArriveAt:   option.ArriveAt().UTC(),
-		CostCents:  option.CostCents(),
-		Legs:       legs,
-	}, nil
+		ID:           id,
+		Place:        placeBody(destination),
+		ComputedAt:   now.UTC(),
+		DepartAt:     option.DepartAt().UTC(),
+		ArriveAt:     option.ArriveAt().UTC(),
+		CostCents:    option.CostCents(),
+		Legs:         legs,
+		Alternatives: []RouteBody{},
+	}
 }
 
 var avoidable = map[string]plan.ModeName{

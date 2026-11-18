@@ -166,3 +166,29 @@ func TestNightWeighsWalkingMore(t *testing.T) {
 		t.Fatal("night boundaries")
 	}
 }
+
+func TestAlternativesOfferTheFreeRoute(t *testing.T) {
+	trip, free, paid := longTrip()
+	paid.Stops[1] = at(paid.Stops[1].Stop, 6)
+	free.Stops[0] = at(free.Stops[0].Stop, 5)
+	free.Stops[1] = at(free.Stops[1].Stop, 13)
+	planner := Planner{Streets: streets.Estimate{}, Modes: []Mode{fixedMode{Shuttle, Network{Rides: []Ride{free}}}, fixedMode{Bus, Network{Rides: []Ride{paid}}}}}
+	choice, err := planner.Choose(context.Background(), trip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if choice.Route.CostCents() == 0 {
+		t.Fatalf("main %v", modes(choice.Route))
+	}
+	if len(choice.Alternatives) == 0 || choice.Alternatives[0].Kind != Free || choice.Alternatives[0].Option.CostCents() != 0 {
+		t.Fatalf("alternatives %+v", choice.Alternatives)
+	}
+	if choice.Alternatives[0].Label != "Free · 7 min slower" {
+		t.Fatalf("label %q", choice.Alternatives[0].Label)
+	}
+	for _, alternative := range choice.Alternatives[1:] {
+		if alternative.Kind == Free {
+			t.Fatal("two free alternatives")
+		}
+	}
+}
