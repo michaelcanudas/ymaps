@@ -123,7 +123,7 @@ There is no exchange rate between minutes and money. The planner picks a route b
 1. A walk of 8 minutes or less wins.
 2. Otherwise, take the earliest estimated arrival. Routes within 3 minutes of it, 5 at night, count as tied. When the earliest route is a walk longer than 20 minutes, the window grows by half the walking beyond 20 minutes, up to 12, so a slightly slower ride beats a long walk.
 3. Among tied routes, prefer less burden: walking minutes, walking beyond 10 minutes counted again, outdoor waiting at 1.5 times, and 3 minutes per transfer. At night walking counts 1.5 times and waiting 2.5 times.
-4. A free route within 4 burden-minutes of the lightest (6 at night) wins over a paid one. Otherwise the lightest wins, then the cheapest.
+4. A free route within 6 burden-minutes of the lightest (10 at night) wins over a paid one. Otherwise the lightest wins, then the cheapest.
 
 Night is after dusk and before dawn in New Haven, by month.
 

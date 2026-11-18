@@ -33,7 +33,7 @@ var (
 		longWalkWeight:  1,
 		waitWeight:      1.5,
 		transferMinutes: 3,
-		freeSlack:       4,
+		freeSlack:       6,
 		equalSlack:      1,
 	}
 	nightPolicy = policy{
@@ -42,7 +42,7 @@ var (
 		longWalkWeight:  1.5,
 		waitWeight:      2.5,
 		transferMinutes: 3,
-		freeSlack:       6,
+		freeSlack:       10,
 		equalSlack:      1,
 	}
 	newHaven = mustLocation("America/New_York")
