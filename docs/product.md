@@ -31,7 +31,7 @@ Speed comes from the surfaces Walter owns:
 - A top black bar that stays available for the destination
 - Hold to talk: the student says where they are going
 
-The spoken or typed destination is sent to the backend. The backend resolves it and returns the route. The client does not choose the route.
+The spoken or typed destination is sent to the backend. The backend resolves it and returns the route it chose, plus up to two alternatives with a short trade-off label. The client does not rank routes; the student may switch to an offered alternative.
 
 ## Words both sides use
 

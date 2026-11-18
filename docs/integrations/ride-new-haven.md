@@ -114,7 +114,7 @@ There is no student price. Recheck these when the site changes.
 - Start: a station with `is_renting` and `num_bikes_available > 0`, or a free-floating bike.
 - End: a station with `is_returning`, among the nearest few to the destination.
 - Range: ignore. 40 km is far beyond any trip in town, and no per-bike charge is published.
-- Speed: the e-bike is a heavy cargo bike. Use 15 km/h at p50 and 12 km/h at p90, plus 1 minute to unlock and park at p50 and 2.5 minutes at p90.
+- Speed: the e-bike is a heavy cargo bike. Use 13 km/h, plus 2 minutes to unlock and dock.
 - Still there on arrival: estimate how fast each station loses bikes from successive `station_status` polls, and discount a station whose last bike may be gone by the time the student walks there.
 
 ## Live behavior

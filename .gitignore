@@ -4,3 +4,6 @@ backend/bin/
 frontend/node_modules/
 frontend/dist/
 frontend/.expo/
+frontend/ios/Config/Signing.local.xcconfig
+frontend/ios/build/
+xcuserdata/

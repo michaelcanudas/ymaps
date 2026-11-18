@@ -49,6 +49,6 @@ Base: `https://cttprdtmgtfs.ctttrpcloud.com/TMGTFSRealTimeWebService`
 5. Geometry: slice the trip's shape in `shapes.txt` between the two stops using `shape_dist_traveled`.
 6. Live position: the trip's vehicle from vehicle positions.
 
-Until we log enough to measure it, p90 is p50 plus 3 minutes for a trip with realtime data and plus 6 for one without.
+The planner uses the realtime estimate when there is one, and the schedule otherwise.
 
 Shore Line East and the Hartford Line publish separate feeds. They are not modes in `docs/product.md`.

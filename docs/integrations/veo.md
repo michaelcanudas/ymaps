@@ -71,7 +71,7 @@ Every plan currently reads $1.00 unlock plus $0.40 per minute (`price` plus `per
 - Start: a vehicle that is not disabled or reserved, with `current_range_meters` at least 1.3 × the ride distance plus 500 m.
 - End: a drop-off spot near the destination. See below.
 - Cost: from the vehicle's `pricing_plan_id`. Plans are marked `is_taxable`; Connecticut sales tax is 6.35%.
-- Speed: scooter 15 km/h at p50 and 12 km/h at p90, e-bike 17 km/h at p50. Add 1 minute to unlock and park at p50 and 2.5 at p90, plus 2 minutes at p90 to find the vehicle, since positions jitter 5 to 50 m.
+- Speed: scooter 13 km/h, e-bike 15 km/h. Add 3 minutes to find, unlock, and park, since positions jitter 5 to 50 m and parking needs a photo.
 - Still there on arrival: discount a vehicle by how long the walk is. Fall back to other vehicles at the same spot.
 
 ## Drop-off spots: open
@@ -100,6 +100,27 @@ Plan:
 4. Rebuild the spot list daily so moved stations follow.
 
 Confirm over a full day that `bike_id` does not rotate after a trip. GBFS recommends rotating it.
+
+## Learned spots
+
+`internal/veospots` learns drop-off spots from the live feed and hands them to `gbfs.NewVeo` as its `SpotSource`. Learned spots replace the single-snapshot clusters once any qualify.
+
+Method:
+
+1. Every 30 s, read the Veo reader's latest snapshot. Key each vehicle by the `number` in `rental_uris.ios`, since `bike_id` may rotate.
+2. Keep each vehicle's resting position. A trip end is a vehicle that is next seen more than 150 m from that position and then stays within 30 m for 2 polls. It does not count if it was away more than 3 hours, or if its `current_range_meters` rose by more than 1 km, since both point to staff charging or rebalancing rather than a ride.
+3. Group trip ends within 30 m into spots, with a running centroid, a count, and a last-seen time. A spot with 3 or more trip ends qualifies.
+4. Until 10 spots qualify, use resting vehicles instead: a vehicle that stays within 30 m for 10 minutes adds one rest to a 30 m group, and a group with 3 or more rests qualifies.
+5. Drop any group that ever held more than 30 vehicles at once (the depot), groups not seen for 30 days, and groups that never qualified within 7 days. Tracks, groups, and the recent trip end list are capped.
+
+State is saved as JSON every 5 minutes and on shutdown, to `VEO_SPOTS_PATH` (default `./data/veo_spots.json`), and loaded on start. On Railway, point it at a mounted volume.
+
+Debug views, served only when `YMAPS_DEBUG=1`. They are not product operations and are not in the contract.
+
+- `GET /debug/veo/spots`: the active source (`tripEnds`, `rests`, or `none`), every group with `lat`, `lon`, `tripEnds` or `rests`, `peakVehicles`, `qualified`, `lastSeen`, and the most recent trip ends.
+- `GET /debug/veo/spots.geojson`: the same as a `FeatureCollection` of points, with `kind` set to `tripEndSpot`, `restSpot`, or `tripEnd`.
+
+A public dataset of station locations was looked for again on 2026-11-17 and none was found.
 
 ## Live behavior
 
