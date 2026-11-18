@@ -72,6 +72,9 @@ struct Route: Codable, Hashable {
     let arriveAt: Date
     let costCents: Int
     let legs: [Leg]
+    let label: String?
+    let kind: String?
+    let alternatives: [Route]?
 }
 
 struct Unresolved: Codable {

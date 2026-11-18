@@ -85,8 +85,8 @@ struct RootView: View {
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.6))
                 searchField
-            case .route(let route):
-                RouteCard(route: route)
+            case .route(let options, let index):
+                RouteCard(route: options[index], options: options, selected: index)
             }
         }
         .padding(18)
@@ -102,7 +102,7 @@ struct RootView: View {
         case .loading: "loading"
         case .choosing: "choosing"
         case .failed: "failed"
-        case .route(let route): route.id + route.arriveAt.description
+        case .route(let options, let index): options[index].id + options[index].arriveAt.description
         }
     }
 
@@ -115,7 +115,10 @@ struct RootView: View {
                 .focused($searching)
                 .submitLabel(.go)
                 .autocorrectionDisabled()
-                .onSubmit { trip.go(to: query) }
+                .onSubmit {
+                    searching = false
+                    trip.go(to: query)
+                }
         }
         .padding(.vertical, 4)
     }
@@ -187,6 +190,8 @@ struct RootView: View {
 struct RouteCard: View {
     @Environment(Trip.self) private var trip
     let route: Route
+    let options: [Route]
+    let selected: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -205,6 +210,15 @@ struct RouteCard: View {
                     .foregroundStyle(.white.opacity(0.55))
             }
             LegStrip(legs: route.legs)
+            if !trip.isLive && options.count > 1 {
+                VStack(spacing: 0) {
+                    ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                        if index != selected {
+                            OptionRow(option: option, isMain: index == 0) { trip.select(index) }
+                        }
+                    }
+                }
+            }
             Button {
                 trip.isLive ? trip.end() : trip.start()
             } label: {
@@ -235,6 +249,54 @@ struct RouteCard: View {
     }
 }
 
+struct OptionRow: View {
+    let option: Route
+    let isMain: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.footnote.weight(.semibold))
+                    .frame(width: 18)
+                    .foregroundStyle(.white.opacity(0.6))
+                Text(isMain ? "Recommended" : (option.label ?? "Another way"))
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Spacer()
+                HStack(spacing: 3) {
+                    ForEach(Array(option.legs.filter(\.isRide).enumerated()), id: \.offset) { _, leg in
+                        Image(systemName: ModeSymbol.name(for: leg.mode))
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.5))
+                Text(option.arriveAt.formatted(date: .omitted, time: .shortened))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) {
+            Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
+        }
+    }
+
+    private var symbol: String {
+        if isMain { return "star.fill" }
+        switch option.kind {
+        case "free": return "tag.fill"
+        case "faster": return "bolt.fill"
+        case "lessWalking": return "figure.walk"
+        case "cheaper": return "dollarsign"
+        default: return "arrow.triangle.branch"
+        }
+    }
+}
+
 struct LegStrip: View {
     let legs: [Leg]
 
@@ -258,8 +320,9 @@ struct LegStrip: View {
             if let line = leg.line {
                 Text(shortName(line.name)).lineLimit(1)
             }
-            Text("\(leg.minutes)")
+            Text("\(leg.minutes)m")
                 .monospacedDigit()
+                .opacity(leg.line == nil ? 1 : 0.7)
         }
         .font(.subheadline.weight(.semibold))
         .padding(.horizontal, leg.isRide ? 10 : 2)

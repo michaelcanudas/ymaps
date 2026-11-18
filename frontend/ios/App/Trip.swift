@@ -10,7 +10,7 @@ final class Trip: NSObject, CLLocationManagerDelegate {
         case idle
         case loading(String)
         case choosing(String, [Place])
-        case route(Route)
+        case route([Route], Int)
         case failed(String)
     }
 
@@ -32,8 +32,18 @@ final class Trip: NSObject, CLLocationManagerDelegate {
     }
 
     var route: Route? {
-        if case .route(let route) = phase { return route }
+        if case .route(let options, let index) = phase { return options[index] }
         return nil
+    }
+
+    var options: [Route] {
+        if case .route(let options, _) = phase { return options }
+        return []
+    }
+
+    func select(_ index: Int) {
+        guard case .route(let options, _) = phase, options.indices.contains(index) else { return }
+        phase = .route(options, index)
     }
 
     func go(to destination: String, placeId: String? = nil) {
@@ -44,7 +54,7 @@ final class Trip: NSObject, CLLocationManagerDelegate {
         Task {
             do {
                 switch try await api.plan(from: here, to: trimmed, placeId: placeId) {
-                case .route(let route): phase = .route(route)
+                case .route(let route): phase = .route([route] + (route.alternatives ?? []), 0)
                 case .choose(let places): phase = .choosing(trimmed, places)
                 case .notFound: phase = .failed("Couldn't find \(trimmed).")
                 }
@@ -85,8 +95,10 @@ final class Trip: NSObject, CLLocationManagerDelegate {
     }
 
     private func refresh() async {
-        guard let route, let fresh = try? await api.refresh(route.id, from: here) else { return }
-        phase = .route(fresh)
+        guard case .route(var options, let index) = phase,
+              let fresh = try? await api.refresh(options[index].id, from: here) else { return }
+        options[index] = fresh
+        phase = .route(options, index)
         await activity?.update(content(for: fresh))
     }
 
