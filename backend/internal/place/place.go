@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math"
 	"sort"
 	"strings"
 
@@ -112,7 +113,37 @@ func decided(candidates []Candidate) (Candidate, bool) {
 	return best, true
 }
 
-const sameMeters = 150.0
+const (
+	sameMeters = 150.0
+	farMeters  = 5000.0
+	farRatio   = 3.0
+)
+
+func nearby(candidates []Candidate, near geo.LatLon) []Candidate {
+	if near == (geo.LatLon{}) || len(candidates) < 2 {
+		return candidates
+	}
+	closest := -1.0
+	for _, c := range candidates {
+		if c.Confidence < clearConfidence-0.1 {
+			continue
+		}
+		if d := geo.Distance(near, c.Place.At); closest < 0 || d < closest {
+			closest = d
+		}
+	}
+	if closest < 0 {
+		return candidates
+	}
+	limit := math.Max(farMeters, farRatio*closest)
+	var kept []Candidate
+	for _, c := range candidates {
+		if geo.Distance(near, c.Place.At) <= limit || c.Place.Source != Google {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
 
 func same(a, b Place) bool {
 	if a.ID == b.ID {
@@ -142,6 +173,7 @@ func rank(candidates []Candidate, near geo.LatLon) []Candidate {
 			unique = append(unique, candidate)
 		}
 	}
+	unique = nearby(unique, near)
 	sort.SliceStable(unique, func(i, j int) bool {
 		if unique[i].Confidence != unique[j].Confidence {
 			return unique[i].Confidence > unique[j].Confidence

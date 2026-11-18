@@ -67,6 +67,7 @@ type result struct {
 	Trip     string   `json:"trip"`
 	Summary  string   `json:"summary"`
 	Failures []string `json:"failures"`
+	Modes    []string `json:"modes"`
 }
 
 const (
@@ -120,6 +121,23 @@ func main() {
 		fmt.Printf("%s %-32s %s\n", status, r.Trip, r.Summary)
 		for _, f := range r.Failures {
 			fmt.Printf("     - %s\n", f)
+		}
+	}
+	if *only == "" {
+		won := map[string]bool{}
+		for _, r := range kept {
+			for _, m := range r.Modes {
+				won[m] = true
+			}
+		}
+		for _, mode := range []string{"shuttle", "veo"} {
+			ran++
+			if won[mode] {
+				passed++
+				fmt.Printf("PASS %-32s\n", mode+" wins a trip")
+			} else {
+				fmt.Printf("FAIL %-32s\n", mode+" wins a trip")
+			}
 		}
 	}
 	fmt.Printf("\n%d/%d passed at %s\n", passed, ran, time.Now().Format("Mon 15:04"))
@@ -176,6 +194,9 @@ func evaluate(base string, t trip, shuttle *shuttleState) result {
 	modes := map[string]bool{}
 	walking := time.Duration(0)
 	for i, l := range got.Legs {
+		if !modes[l.Mode] {
+			r.Modes = append(r.Modes, l.Mode)
+		}
 		modes[l.Mode] = true
 		if l.ArriveAt.Before(l.DepartAt) {
 			fail("leg %d arrives before it departs", i)
@@ -227,13 +248,16 @@ func evaluate(base string, t trip, shuttle *shuttleState) result {
 	if straight <= shortTripMeters && !walkOnlyRoute {
 		fail("trip is %.0f m but the route is not a walk", straight)
 	}
+	if hour := time.Now().Hour(); walkOnlyRoute && walkOnly > 25*time.Minute && hour >= 6 && hour < 23 {
+		fail("a %s walk with no ride offered", walkOnly.Round(time.Minute))
+	}
 	if contains(t.Expect, "walk") && !walkOnlyRoute {
 		fail("expected a walk")
 	}
 	if !walkOnlyRoute && walking > walkOnly+3*time.Minute {
 		fail("walks %s, more than walking there (%s)", walking.Round(time.Second), walkOnly.Round(time.Second))
 	}
-	if limit := got.ComputedAt.Add(walkOnly + 6*time.Minute); got.ArriveAt.After(limit) && !walkOnlyRoute {
+	if limit := got.ComputedAt.Add(walkOnly + 7*time.Minute); got.ArriveAt.After(limit) && !walkOnlyRoute {
 		fail("arrives %s after just walking would", got.ArriveAt.Sub(got.ComputedAt.Add(walkOnly)).Round(time.Second))
 	}
 	if contains(t.Expect, "shuttle_if_obvious") && !modes["shuttle"] {

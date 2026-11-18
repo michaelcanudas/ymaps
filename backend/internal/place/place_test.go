@@ -15,3 +15,13 @@ func TestSamePlaceFromTwoSourcesIsDecided(t *testing.T) {
 		t.Fatalf("best %+v ok %v", best, ok)
 	}
 }
+
+func TestFarGoogleResultsDropOut(t *testing.T) {
+	near := geo.LatLon{Lat: 41.3083, Lon: -72.9257}
+	hall := Candidate{Place: Place{ID: "yale:1", Name: "Watson Hall", Source: Yale, At: geo.LatLon{Lat: 41.3117, Lon: -72.9244}}, Confidence: 0.6}
+	clinic := Candidate{Place: Place{ID: "google:b", Name: "Brekus-Watson", Source: Google, At: geo.LatLon{Lat: 41.2830, Lon: -72.8150}}, Confidence: 0.5}
+	ranked := rank([]Candidate{hall, clinic}, near)
+	if len(ranked) != 1 || ranked[0].Place.ID != "yale:1" {
+		t.Fatalf("ranked %+v", ranked)
+	}
+}
