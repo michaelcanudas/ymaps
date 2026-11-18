@@ -4,9 +4,10 @@ import SwiftUI
 struct RootView: View {
     @Environment(Trip.self) private var trip
     @State private var camera: MapCameraPosition = .userLocation(fallback: .region(RootView.campus))
-    @State private var query = ""
-    @FocusState private var searching: Bool
     @Binding var searchRequest: Int
+    #if LIVE_SHUTTLES
+    @State private var shuttles = LiveShuttles()
+    #endif
 
     static let campus = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 41.3105, longitude: -72.9260),
@@ -14,29 +15,39 @@ struct RootView: View {
     )
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            map
-            card
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-        }
-        .background(.black)
-        .onChange(of: trip.route) { _, route in
-            guard let route else { return }
-            withAnimation(.easeInOut(duration: 0.5)) { camera = RootView.framing(route) }
-        }
-        .onChange(of: phaseKey) { _, key in
-            if key == "idle" { query = "" }
-        }
-        .onChange(of: searchRequest) {
-            trip.clear()
-            searching = true
-        }
+        map
+            .ignoresSafeArea()
+            .safeAreaInset(edge: .bottom) {
+                TripPanel(searchRequest: searchRequest)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
+            .background(.black)
+            #if LIVE_SHUTTLES
+            .task { await shuttles.run() }
+            #endif
+            .onChange(of: trip.route) { _, route in
+                guard let route else { return }
+                withAnimation(.easeInOut(duration: 0.5)) { camera = RootView.framing(route) }
+            }
     }
 
     private var map: some View {
         Map(position: $camera) {
             UserAnnotation()
+            #if LIVE_SHUTTLES
+            ForEach(shuttles.buses) { bus in
+                Annotation("", coordinate: bus.coordinate.location) {
+                    Image(systemName: "location.north.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.black)
+                        .rotationEffect(.degrees(bus.heading))
+                        .frame(width: 18, height: 18)
+                        .background(Color(hex: bus.color), in: Circle())
+                        .animation(.linear(duration: 5), value: bus.coordinate)
+                }
+            }
+            #endif
             if let route = trip.route {
                 ForEach(Array(route.legs.enumerated()), id: \.offset) { _, leg in
                     if let line = leg.line {
@@ -54,7 +65,7 @@ struct RootView: View {
                             .frame(width: 12, height: 12)
                     }
                 }
-                Annotation(route.place.name, coordinate: route.legs.last!.to.coordinate.location) {
+                Annotation("", coordinate: route.legs.last!.to.coordinate.location) {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(.white)
                         .frame(width: 14, height: 14)
@@ -63,94 +74,7 @@ struct RootView: View {
         }
         .mapStyle(.standard(emphasis: .muted, pointsOfInterest: .excludingAll))
         .mapControlVisibility(.hidden)
-        .ignoresSafeArea()
-    }
-
-    @ViewBuilder
-    private var card: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            switch trip.phase {
-            case .idle:
-                searchField
-            case .loading(let destination):
-                HStack {
-                    Text(destination).font(.headline)
-                    Spacer()
-                    ProgressView().tint(.white)
-                }
-            case .choosing(let destination, let places):
-                choices(destination, places)
-            case .failed(let message):
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.6))
-                searchField
-            case .route(let options, let index):
-                RouteCard(route: options[index], options: options, selected: index)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.black, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .foregroundStyle(.white)
-        .animation(.easeInOut(duration: 0.2), value: phaseKey)
-    }
-
-    private var phaseKey: String {
-        switch trip.phase {
-        case .idle: "idle"
-        case .loading: "loading"
-        case .choosing: "choosing"
-        case .failed: "failed"
-        case .route(let options, let index): options[index].id + options[index].arriveAt.description
-        }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.white.opacity(0.5))
-            TextField("", text: $query, prompt: Text("Where to?").foregroundStyle(.white.opacity(0.5)))
-                .font(.title3.weight(.semibold))
-                .focused($searching)
-                .submitLabel(.go)
-                .autocorrectionDisabled()
-                .onSubmit {
-                    searching = false
-                    trip.go(to: query)
-                }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func choices(_ destination: String, _ places: [Place]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Which \(destination)?").font(.headline)
-                Spacer()
-                CloseButton { trip.clear() }
-            }
-            .padding(.bottom, 6)
-            ForEach(places) { place in
-                Button {
-                    trip.go(to: destination, placeId: place.id)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(place.name).font(.body.weight(.medium))
-                        if let address = place.address {
-                            Text(address)
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.5))
-                                .lineLimit(1)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
+        .ignoresSafeArea(.keyboard)
     }
 
     static func color(for leg: Leg) -> Color {
@@ -187,6 +111,140 @@ struct RootView: View {
     }
 }
 
+struct TripPanel: View {
+    @Environment(Trip.self) private var trip
+    let searchRequest: Int
+    @State private var query = ""
+    @FocusState private var searching: Bool
+
+    var body: some View {
+        content
+            .foregroundStyle(.white)
+            .animation(.snappy, value: phaseKey)
+            .animation(.snappy, value: searching)
+            .onChange(of: phaseKey) { _, key in
+                if key == "idle" { query = "" }
+            }
+            .onChange(of: searchRequest) {
+                trip.clear()
+                searching = true
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch trip.phase {
+        case .idle:
+            searchBar
+        case .loading(let destination):
+            card {
+                HStack {
+                    Text(destination).font(.headline)
+                    Spacer()
+                    ProgressView().tint(.white)
+                }
+            }
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .padding(.horizontal, 8)
+                searchBar
+            }
+        case .choosing(let destination, let places):
+            card { choices(destination, places) }
+        case .route(let options, let index):
+            card { RouteCard(route: options[index], options: options, selected: index) }
+        }
+    }
+
+    private var phaseKey: String {
+        switch trip.phase {
+        case .idle: "idle"
+        case .loading: "loading"
+        case .choosing: "choosing"
+        case .failed: "failed"
+        case .route(let options, let index): options[index].id
+        }
+    }
+
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.black, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.white.opacity(0.5))
+            TextField("", text: $query, prompt: Text("Where to?").foregroundStyle(.white.opacity(0.5)))
+                .font(.body.weight(.medium))
+                .focused($searching)
+                .submitLabel(.go)
+                .autocorrectionDisabled()
+                .onSubmit {
+                    searching = false
+                    trip.go(to: query)
+                }
+            if searching && !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+            }
+            if searching {
+                Button("Cancel") {
+                    searching = false
+                    query = ""
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.white.opacity(0.7))
+                .buttonStyle(.plain)
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 56)
+        .background(.black, in: Capsule())
+    }
+
+    private func choices(_ destination: String, _ places: [Place]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Which \(destination)?").font(.headline)
+                Spacer()
+                CloseButton { trip.clear() }
+            }
+            .padding(.bottom, 6)
+            ForEach(places) { place in
+                Button {
+                    trip.go(to: destination, placeId: place.id)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(place.name).font(.body.weight(.medium))
+                        if let address = place.address {
+                            Text(address)
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.5))
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
 struct RouteCard: View {
     @Environment(Trip.self) private var trip
     let route: Route
@@ -212,10 +270,8 @@ struct RouteCard: View {
             LegStrip(legs: route.legs)
             if !trip.isLive && options.count > 1 {
                 VStack(spacing: 0) {
-                    ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                        if index != selected {
-                            OptionRow(option: option, isMain: index == 0) { trip.select(index) }
-                        }
+                    ForEach(options.indices.filter { $0 != selected }, id: \.self) { index in
+                        OptionRow(option: options[index], isMain: index == 0) { trip.select(index) }
                     }
                 }
             }
@@ -239,9 +295,6 @@ struct RouteCard: View {
 
     private var subtitle: String {
         var parts = ["Arrive \(route.arriveAt.formatted(date: .omitted, time: .shortened))"]
-        if let first = route.legs.first(where: { $0.isRide }) {
-            parts.append(Trip.instruction(for: first))
-        }
         if route.costCents > 0 {
             parts.append((Double(route.costCents) / 100).formatted(.currency(code: "USD")))
         }
@@ -256,25 +309,14 @@ struct OptionRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.footnote.weight(.semibold))
-                    .frame(width: 18)
-                    .foregroundStyle(.white.opacity(0.6))
+            HStack {
                 Text(isMain ? "Recommended" : (option.label ?? "Another way"))
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                 Spacer()
-                HStack(spacing: 3) {
-                    ForEach(Array(option.legs.filter(\.isRide).enumerated()), id: \.offset) { _, leg in
-                        Image(systemName: ModeSymbol.name(for: leg.mode))
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.5))
                 Text(option.arriveAt.formatted(date: .omitted, time: .shortened))
                     .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.white.opacity(0.5))
             }
             .padding(.vertical, 10)
             .contentShape(Rectangle())
@@ -282,17 +324,6 @@ struct OptionRow: View {
         .buttonStyle(.plain)
         .overlay(alignment: .top) {
             Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
-        }
-    }
-
-    private var symbol: String {
-        if isMain { return "star.fill" }
-        switch option.kind {
-        case "free": return "tag.fill"
-        case "faster": return "bolt.fill"
-        case "lessWalking": return "figure.walk"
-        case "cheaper": return "dollarsign"
-        default: return "arrow.triangle.branch"
         }
     }
 }
@@ -350,6 +381,7 @@ struct CloseButton: View {
                 .background(.white.opacity(0.12), in: Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Close")
     }
 }
 
