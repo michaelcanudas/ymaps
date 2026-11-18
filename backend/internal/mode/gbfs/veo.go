@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"ymaps/backend/internal/geo"
 	"ymaps/backend/internal/plan"
 	"ymaps/backend/internal/streets"
 )
@@ -13,31 +12,28 @@ import (
 const veoDiscovery = "https://cluster-prod.veoride.com/api/shares/name/nhv/gbfs"
 
 const (
-	scooterSpeedKmh     = 15.0
-	scooterLateSpeedKmh = 12.0
-	eBikeSpeedKmh       = 17.0
-	findVehicleP90      = 2 * time.Minute
-	rangeSafetyFactor   = 1.3
-	rangeReserveMeters  = 500.0
-	sameSpotMeters      = 15.0
-	companionMeters     = 30.0
-	veoVehiclesPerEnd   = 5
+	scooterSpeedKmh = 13.0
+	eBikeSpeedKmh   = 15.0
 )
 
+type SpotSource interface {
+	Spots() []Spot
+}
+
 type VeoMode struct {
-	streets streets.Streets
-	reader  *Reader
-	now     func() time.Time
+	reader *Reader
+	spots  SpotSource
+	now    func() time.Time
 }
 
-func NewVeo(s streets.Streets) *VeoMode {
-	return newVeo(s, veoDiscovery)
+func NewVeo(spots SpotSource) *VeoMode {
+	return newVeo(veoDiscovery, spots)
 }
 
-func newVeo(s streets.Streets, discoveryURL string) *VeoMode {
+func newVeo(discoveryURL string, spots SpotSource) *VeoMode {
 	return &VeoMode{
-		streets: s,
-		now:     time.Now,
+		now:   time.Now,
+		spots: spots,
 		reader: NewReader(Config{
 			Name:         "veo",
 			DiscoveryURL: discoveryURL,
@@ -53,6 +49,10 @@ func newVeo(s streets.Streets, discoveryURL string) *VeoMode {
 	}
 }
 
+func (m *VeoMode) Reader() *Reader {
+	return m.reader
+}
+
 func (m *VeoMode) Name() plan.ModeName {
 	return plan.Veo
 }
@@ -61,188 +61,58 @@ func (m *VeoMode) Run(ctx context.Context) {
 	m.reader.Run(ctx)
 }
 
-type veoVehicle struct {
-	vehicle    FreeVehicle
-	form       string
-	plan       PricingPlan
-	speedKmh   float64
-	companions int
-}
-
-func (v veoVehicle) point() plan.Point {
-	return plan.Point{ID: "veo:" + v.vehicle.ID, Name: v.name(), At: v.vehicle.At}
-}
-
-func (v veoVehicle) name() string {
-	if v.form == "bike" {
-		return "Veo e-bike"
-	}
-	return "Veo scooter"
-}
-
-func (v veoVehicle) profile() streets.Profile {
-	return streets.Profile{Kind: streets.Bicycle, SpeedKmh: v.speedKmh}
-}
-
-func (v veoVehicle) late(ride time.Duration) time.Duration {
-	return scaleDuration(ride, scooterSpeedKmh/scooterLateSpeedKmh) + unlockAndParkP90 + findVehicleP90
-}
-
-func (v veoVehicle) reaches(meters float64) bool {
-	if v.vehicle.RangeMeters == nil {
-		return true
-	}
-	return *v.vehicle.RangeMeters >= rangeSafetyFactor*meters+rangeReserveMeters
-}
-
-func (m *VeoMode) Options(ctx context.Context, trip plan.Trip) ([]plan.Option, error) {
+func (m *VeoMode) Network(_ context.Context, query plan.Query) (plan.Network, error) {
 	snapshot := m.reader.Fresh(m.now())
 	if snapshot == nil {
-		return nil, nil
+		return plan.Network{}, nil
 	}
-	tripMeters := geo.Distance(trip.Origin.At, trip.Destination.At) * rangeSafetyFactor
-	vehicles := nearestVeoVehicles(snapshot, trip.Origin.At, tripMeters)
-	spots := nearestSpots(snapshot.Spots, trip.Destination.At)
-	if len(vehicles) == 0 || len(spots) == 0 {
-		return nil, nil
-	}
-	vehiclePoints := make([]geo.LatLon, len(vehicles))
-	for i, vehicle := range vehicles {
-		vehiclePoints[i] = vehicle.vehicle.At
-	}
-	spotPoints := make([]geo.LatLon, len(spots))
-	for i, spot := range spots {
-		spotPoints[i] = spot.At
-	}
-	walkIn, walkOut, err := walkTimes(ctx, m.streets, trip.Origin.At, vehiclePoints, spotPoints, trip.Destination.At)
-	if err != nil {
-		return nil, err
-	}
-	rides, err := m.rideMatrix(ctx, vehicles, spotPoints)
-	if err != nil {
-		return nil, err
-	}
-	pairs := bestPairs(len(vehicles), len(spots), func(i, j int) (time.Duration, bool) {
-		meters := geo.Distance(vehiclePoints[i], spotPoints[j])
-		if meters < companionMeters || !vehicles[i].reaches(meters*rangeSafetyFactor) {
-			return 0, false
+	spots := snapshot.Spots
+	if m.spots != nil {
+		if learned := m.spots.Spots(); len(learned) > 0 {
+			spots = learned
 		}
-		late := scaleDuration(walkIn[i], estimatedLateWalk) + vehicles[i].late(rides[i][j]) + loneVehicleRisk(walkIn[i], vehicles[i].companions) + scaleDuration(walkOut[j], estimatedLateWalk)
-		return late, true
-	})
-	var options []plan.Option
-	for _, chosen := range pairs {
-		vehicle := vehicles[chosen.pickup]
-		spot := spots[chosen.dropoff]
-		trace, err := m.streets.Route(ctx, vehicle.vehicle.At, spot.At, vehicle.profile())
-		if err != nil || !vehicle.reaches(trace.Meters) {
+	}
+	rental := plan.Rental{Mode: plan.Veo}
+	for _, spot := range spots {
+		if query.Covers(spot.At) {
+			rental.Dropoffs = append(rental.Dropoffs, plan.Point{ID: "veo:spot:" + spot.ID, Name: "Veo parking", At: spot.At})
+		}
+	}
+	for _, vehicle := range snapshot.Vehicles {
+		if !query.Covers(vehicle.At) {
 			continue
 		}
-		rideP50 := trace.Duration + unlockAndParkP50
-		rideP90 := vehicle.late(trace.Duration) + loneVehicleRisk(walkIn[chosen.pickup], vehicle.companions)
-		leg := plan.Leg{
-			Mode:      plan.Veo,
-			From:      vehicle.point(),
-			To:        plan.Point{ID: "veo:spot:" + spot.ID, Name: "Veo parking", At: spot.At},
-			CostCents: vehicle.plan.Cents(rideP50.Minutes()),
-			Path:      trace.Path,
-			Vehicle:   &plan.Vehicle{ID: vehicle.vehicle.ID, Name: vehicle.name(), At: vehicle.vehicle.At},
-			Form:      vehicle.form,
-			RentalURI: vehicle.vehicle.RentalURI,
+		if pickup, ok := veoPickup(snapshot, vehicle); ok {
+			rental.Pickups = append(rental.Pickups, pickup)
 		}
-		option, err := assemble(ctx, m.streets, trip, leg, rideP50, rideP90)
-		if err != nil {
-			continue
-		}
-		options = append(options, option)
 	}
-	return options, nil
+	if len(rental.Pickups) == 0 || len(rental.Dropoffs) == 0 {
+		return plan.Network{}, nil
+	}
+	return plan.Network{Rentals: []plan.Rental{rental}}, nil
 }
 
-func (m *VeoMode) rideMatrix(ctx context.Context, vehicles []veoVehicle, spots []geo.LatLon) ([][]time.Duration, error) {
-	rides := make([][]time.Duration, len(vehicles))
-	groups := map[float64][]int{}
-	for i, vehicle := range vehicles {
-		groups[vehicle.speedKmh] = append(groups[vehicle.speedKmh], i)
-	}
-	for _, members := range groups {
-		from := make([]geo.LatLon, len(members))
-		for k, index := range members {
-			from[k] = vehicles[index].vehicle.At
-		}
-		durations, err := m.streets.Matrix(ctx, from, spots, vehicles[members[0]].profile())
-		if err != nil {
-			return nil, err
-		}
-		for k, index := range members {
-			rides[index] = durations[k]
-		}
-	}
-	return rides, nil
-}
-
-func usableVeoVehicle(snapshot *Snapshot, vehicle FreeVehicle) (veoVehicle, bool) {
+func veoPickup(snapshot *Snapshot, vehicle FreeVehicle) (plan.Pickup, bool) {
 	pricing, priced := snapshot.Plans[vehicle.PlanID]
 	if !priced {
-		return veoVehicle{}, false
+		return plan.Pickup{}, false
 	}
-	usable := veoVehicle{vehicle: vehicle, form: "scooter", plan: pricing, speedKmh: scooterSpeedKmh}
-	kind, known := snapshot.Types[vehicle.TypeID]
-	if known && kind.Form == "bicycle" {
-		usable.form = "bike"
+	form, name, speed := "scooter", "Veo scooter", scooterSpeedKmh
+	if kind, known := snapshot.Types[vehicle.TypeID]; known && kind.Form == "bicycle" {
+		form, name = "bike", "Veo e-bike"
 		if strings.HasPrefix(kind.Propulsion, "electric") {
-			usable.speedKmh = eBikeSpeedKmh
+			speed = eBikeSpeedKmh
 		}
 	}
-	return usable, true
-}
-
-func nearestVeoVehicles(snapshot *Snapshot, origin geo.LatLon, tripMeters float64) []veoVehicle {
-	var usable []veoVehicle
-	for _, vehicle := range snapshot.Vehicles {
-		candidate, ok := usableVeoVehicle(snapshot, vehicle)
-		if ok && candidate.reaches(tripMeters) {
-			usable = append(usable, candidate)
-		}
-	}
-	points := make([]geo.LatLon, len(usable))
-	for i, candidate := range usable {
-		points[i] = candidate.vehicle.At
-	}
-	var chosen []veoVehicle
-	for _, index := range nearestIndices(points, origin, len(points)) {
-		candidate := usable[index]
-		duplicate := false
-		for _, existing := range chosen {
-			if geo.Distance(existing.vehicle.At, candidate.vehicle.At) < sameSpotMeters {
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
-			continue
-		}
-		for _, other := range usable {
-			if geo.Distance(other.vehicle.At, candidate.vehicle.At) <= companionMeters {
-				candidate.companions++
-			}
-		}
-		chosen = append(chosen, candidate)
-		if len(chosen) == veoVehiclesPerEnd {
-			break
-		}
-	}
-	return chosen
-}
-
-func nearestSpots(spots []Spot, destination geo.LatLon) []Spot {
-	points := make([]geo.LatLon, len(spots))
-	for i, spot := range spots {
-		points[i] = spot.At
-	}
-	var chosen []Spot
-	for _, index := range nearestIndices(points, destination, candidatesPerEnd) {
-		chosen = append(chosen, spots[index])
-	}
-	return chosen
+	point := plan.Point{ID: "veo:" + vehicle.ID, Name: name, At: vehicle.At}
+	return plan.Pickup{
+		Point:       point,
+		Vehicle:     &plan.Vehicle{ID: vehicle.ID, Name: name, At: vehicle.At},
+		Form:        form,
+		RentalURI:   vehicle.RentalURI,
+		Profile:     streets.Profile{Kind: streets.Bicycle, SpeedKmh: speed},
+		RangeMeters: vehicle.RangeMeters,
+		Unlock:      veoUnlockAndPark,
+		Cost:        func(ride time.Duration) int { return pricing.Cents(ride.Minutes()) },
+	}, true
 }

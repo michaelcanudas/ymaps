@@ -1,177 +1,197 @@
 package shuttle
 
 import (
-	"math"
-	"sort"
-	"sync"
+	"strconv"
 	"time"
+
+	"ymaps/backend/internal/geo"
+	"ymaps/backend/internal/plan"
 )
 
 const (
-	busSpeedMetersPerSecond = 4.5
-	dwellPerStop            = 20 * time.Second
-	minimumLateDelay        = 2 * time.Minute
-	lateFraction            = 0.25
-	maxMissedLoops          = 3
-	observationsKept        = 20
+	busSpeedMetersPerSecond = 5.0
+	dwellPerStop            = 15 * time.Second
+	loopsAhead              = 2
+	minimumPace             = 0.6
+	maximumPace             = 1.8
+	anchorBacktrack         = 30 * time.Second
 )
-
-type passage struct {
-	board     int
-	alight    int
-	stopCount int
-}
-
-func passages(stops []int, board, alight int) []passage {
-	n := len(stops)
-	var found []passage
-	for i, id := range stops {
-		if id != board {
-			continue
-		}
-		for distance := 1; distance < n; distance++ {
-			j := (i + distance) % n
-			if stops[j] == alight {
-				found = append(found, passage{board: i, alight: j, stopCount: distance})
-				break
-			}
-		}
-	}
-	return found
-}
 
 type etaLookup func(stopID, busID int) (time.Time, bool)
 
-type pass struct {
-	bus      bus
-	passage  passage
-	boardAt  time.Time
-	alightAt time.Time
-	lateBy   time.Duration
-}
-
-type rideKey struct {
-	route  int
-	board  int
-	alight int
-}
-
-type rideObservations struct {
-	mutex  sync.Mutex
-	byPair map[rideKey][]time.Duration
-}
-
-func (o *rideObservations) record(key rideKey, ride time.Duration) {
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-	if o.byPair == nil {
-		o.byPair = map[rideKey][]time.Duration{}
-	}
-	recent := append(o.byPair[key], ride)
-	if len(recent) > observationsKept {
-		recent = recent[len(recent)-observationsKept:]
-	}
-	o.byPair[key] = recent
-}
-
-func (o *rideObservations) median(key rideKey) (time.Duration, bool) {
-	o.mutex.Lock()
-	recent := append([]time.Duration{}, o.byPair[key]...)
-	o.mutex.Unlock()
-	if len(recent) == 0 {
-		return 0, false
-	}
-	sort.Slice(recent, func(i, j int) bool { return recent[i] < recent[j] })
-	return recent[len(recent)/2], true
-}
-
-func (l *line) estimatedRide(p passage) time.Duration {
-	return travelDuration(l.rideMeters(p.board, p.alight), p.stopCount)
-}
-
-func (l *line) estimatedLoop() time.Duration {
-	return travelDuration(l.loopMeters(), len(l.stops))
+func (l *line) segment(k int) time.Duration {
+	n := len(l.stops)
+	return travelDuration(l.rideMeters(k, (k+1)%n), 1)
 }
 
 func travelDuration(meters float64, stops int) time.Duration {
 	return time.Duration(meters/busSpeedMetersPerSecond*float64(time.Second)) + time.Duration(stops)*dwellPerStop
 }
 
-func (l *line) plan(b bus, boardStop, alightStop int, etas etaLookup, observations *rideObservations, walkArrival, now time.Time) (pass, bool) {
-	options := passages(l.stops, boardStop, alightStop)
-	if len(options) == 0 {
-		return pass{}, false
-	}
-	boardAt, ok := etas(boardStop, b.ID)
-	if !ok {
-		return pass{}, false
-	}
-	key := rideKey{route: l.id, board: boardStop, alight: alightStop}
-	chosen, ride := options[0], time.Duration(0)
-	if alightAt, ok := etas(alightStop, b.ID); ok && alightAt.After(boardAt) {
-		ride = alightAt.Sub(boardAt)
-		observations.record(key, ride)
-		chosen = l.closestPassage(options, ride)
-	} else {
-		chosen = shortestPassage(options)
-		if median, ok := observations.median(key); ok {
-			ride = median
-		} else {
-			ride = l.estimatedRide(chosen)
+func (l *line) startIndex(b bus, etas etaLookup) int {
+	n := len(l.stops)
+	if b.LastStop != 0 {
+		for k, id := range l.stops {
+			if id == b.LastStop {
+				return (k + 1) % n
+			}
 		}
 	}
-	loop := l.loopDuration(b, etas, now)
-	for missed := 0; boardAt.Before(walkArrival); missed++ {
-		if missed == maxMissedLoops || loop <= 0 {
-			return pass{}, false
-		}
-		boardAt = boardAt.Add(loop)
-	}
-	alightAt := boardAt.Add(ride)
-	return pass{bus: b, passage: chosen, boardAt: boardAt, alightAt: alightAt, lateBy: lateDelay(alightAt.Sub(now))}, true
-}
-
-func (l *line) closestPassage(options []passage, ride time.Duration) passage {
-	best, bestError := options[0], time.Duration(math.MaxInt64)
-	for _, option := range options {
-		difference := l.estimatedRide(option) - ride
-		if difference < 0 {
-			difference = -difference
-		}
-		if difference < bestError {
-			best, bestError = option, difference
+	best, bestAt := 0, time.Time{}
+	for k, id := range l.stops {
+		if at, ok := etas(id, b.ID); ok && (bestAt.IsZero() || at.Before(bestAt)) {
+			best, bestAt = k, at
 		}
 	}
 	return best
 }
 
-func shortestPassage(options []passage) passage {
-	best := options[0]
-	for _, option := range options[1:] {
-		if option.stopCount < best.stopCount {
-			best = option
-		}
-	}
-	return best
+type anchor struct {
+	position int
+	at       time.Time
 }
 
-func (l *line) loopDuration(b bus, etas etaLookup, now time.Time) time.Duration {
-	estimate := l.estimatedLoop()
-	if b.LastStop == 0 {
-		return estimate
+func (l *line) schedule(b bus, etas etaLookup, now, until time.Time) ([]int, []time.Time) {
+	n := len(l.stops)
+	if n < 2 {
+		return nil, nil
 	}
-	if at, ok := etas(b.LastStop, b.ID); ok {
-		if observed := at.Sub(now); observed >= estimate/2 {
-			return observed
+	start := l.startIndex(b, etas)
+	total := n * loopsAhead
+	positions := make([]int, total)
+	expected := make([]time.Duration, total)
+	elapsed := time.Duration(0)
+	for j := 0; j < total; j++ {
+		positions[j] = (start + j) % n
+		if j > 0 {
+			elapsed += l.segment(positions[j-1])
+		}
+		expected[j] = elapsed
+	}
+	var anchors []anchor
+	seen := map[int]bool{}
+	for j := 0; j < n; j++ {
+		id := l.stops[positions[j]]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		at, ok := etas(id, b.ID)
+		if !ok {
+			continue
+		}
+		if len(anchors) > 0 && at.Before(anchors[len(anchors)-1].at.Add(-anchorBacktrack)) {
+			continue
+		}
+		if len(anchors) > 0 && at.Before(anchors[len(anchors)-1].at) {
+			at = anchors[len(anchors)-1].at
+		}
+		anchors = append(anchors, anchor{position: j, at: at})
+	}
+	pace := 1.0
+	if len(anchors) >= 2 {
+		first, last := anchors[0], anchors[len(anchors)-1]
+		if span := expected[last.position] - expected[first.position]; span > 2*time.Minute {
+			pace = clamp(last.at.Sub(first.at).Seconds()/span.Seconds(), minimumPace, maximumPace)
 		}
 	}
-	return estimate
+	times := make([]time.Time, total)
+	scaled := func(from, to int) time.Duration {
+		return time.Duration(pace * float64(expected[to]-expected[from]))
+	}
+	for j := 0; j < total; j++ {
+		var before, after *anchor
+		for k := range anchors {
+			if anchors[k].position <= j {
+				before = &anchors[k]
+			}
+			if anchors[k].position >= j && after == nil {
+				after = &anchors[k]
+			}
+		}
+		switch {
+		case before != nil && after != nil && before.position != after.position:
+			fraction := float64(expected[j]-expected[before.position]) / float64(expected[after.position]-expected[before.position])
+			times[j] = before.at.Add(time.Duration(fraction * float64(after.at.Sub(before.at))))
+		case before != nil:
+			times[j] = before.at.Add(scaled(before.position, j))
+		case after != nil:
+			times[j] = after.at.Add(-scaled(j, after.position))
+		default:
+			times[j] = now.Add(scaled(0, j))
+		}
+	}
+	for j := range times {
+		if times[j].Before(now) {
+			times[j] = now
+		}
+		if j > 0 && times[j].Before(times[j-1]) {
+			times[j] = times[j-1]
+		}
+	}
+	cut := total
+	for j := range times {
+		if times[j].After(until) {
+			cut = j + 1
+			break
+		}
+	}
+	return positions[:cut], times[:cut]
 }
 
-func lateDelay(untilArrival time.Duration) time.Duration {
-	delay := time.Duration(float64(untilArrival) * lateFraction)
-	if delay < minimumLateDelay {
-		return minimumLateDelay
+func clamp(value, low, high float64) float64 {
+	if value < low {
+		return low
 	}
-	return delay
+	if value > high {
+		return high
+	}
+	return value
+}
+
+func (l *line) ride(b bus, stops map[int]stop, etas etaLookup, now, until time.Time) (plan.Ride, bool) {
+	positions, times := l.schedule(b, etas, now, until)
+	if len(positions) < 2 {
+		return plan.Ride{}, false
+	}
+	stopTimes := make([]plan.StopTime, len(positions))
+	for j, k := range positions {
+		s, ok := stops[l.stops[k]]
+		if !ok {
+			return plan.Ride{}, false
+		}
+		stopTimes[j] = plan.StopTime{Stop: stopPoint(s), Arrive: times[j], Depart: times[j]}
+	}
+	heading := b.Heading
+	return plan.Ride{
+		Mode: plan.Shuttle,
+		Line: &plan.Line{
+			ID:    "shuttle:line:" + strconv.Itoa(l.id),
+			Name:  l.name,
+			Color: l.color,
+			Path:  l.path,
+		},
+		Vehicle: &plan.Vehicle{
+			ID:      "shuttle:bus:" + strconv.Itoa(b.ID),
+			Name:    b.Name,
+			At:      geo.LatLon{Lat: b.Lat, Lon: b.Lon},
+			Heading: &heading,
+		},
+		Stops: stopTimes,
+		Path: func(board, alight int) []geo.LatLon {
+			var path []geo.LatLon
+			for j := board; j < alight; j++ {
+				piece := l.legPath(positions[j], positions[j+1])
+				if len(path) > 0 && len(piece) > 0 {
+					piece = piece[1:]
+				}
+				path = append(path, piece...)
+			}
+			return path
+		},
+	}, true
+}
+
+func stopPoint(s stop) plan.Point {
+	return plan.Point{ID: "shuttle:" + strconv.Itoa(s.ID), Name: s.Name, At: s.at()}
 }

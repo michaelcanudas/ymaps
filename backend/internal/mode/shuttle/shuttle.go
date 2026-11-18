@@ -12,23 +12,24 @@ import (
 
 	"ymaps/backend/internal/geo"
 	"ymaps/backend/internal/plan"
-	"ymaps/backend/internal/streets"
 )
 
 const (
 	routesInterval   = time.Minute
 	stopsInterval    = time.Hour
 	busesInterval    = 5 * time.Second
-	etaWindow        = 30 * time.Second
+	etaWindow        = 45 * time.Second
 	busesFreshFor    = 30 * time.Second
-	etasFreshFor     = 90 * time.Second
+	etasFreshFor     = 120 * time.Second
 	busReportFresh   = 60 * time.Second
-	nearbyMeters     = 800.0
-	nearbyStopsKept  = 6
-	optionsKept      = 3
 	idleETAWait      = 5 * time.Second
-	walkRankingSlack = 1.1
+	requestETAAge    = 20 * time.Second
+	requestETAMeters = 900.0
+	requestETAStops  = 8
+	requestETAWait   = 1500 * time.Millisecond
 )
+
+var downtownerBias = []time.Duration{0, 0, 0, 0, 0}
 
 type stopETAs struct {
 	fetchedAt time.Time
@@ -45,20 +46,19 @@ type snapshot struct {
 }
 
 type Mode struct {
-	streets      streets.Streets
-	source       *downtowner
-	now          func() time.Time
-	current      atomic.Pointer[snapshot]
-	writer       sync.Mutex
-	observations rideObservations
+	source   *downtowner
+	now      func() time.Time
+	current  atomic.Pointer[snapshot]
+	writer   sync.Mutex
+	accuracy *Accuracy
 }
 
-func New(s streets.Streets) *Mode {
-	return newMode(s, downtownerURL)
+func New() *Mode {
+	return newMode(downtownerURL)
 }
 
-func newMode(s streets.Streets, baseURL string) *Mode {
-	m := &Mode{streets: s, source: newDowntowner(baseURL), now: time.Now}
+func newMode(baseURL string) *Mode {
+	m := &Mode{source: newDowntowner(baseURL), now: time.Now, accuracy: NewAccuracy(downtownerBias)}
 	m.current.Store(&snapshot{})
 	return m
 }
@@ -132,6 +132,13 @@ func (m *Mode) pollBuses(ctx context.Context) error {
 		return err
 	}
 	fetchedAt := m.now()
+	if changed {
+		for _, b := range buses {
+			if b.LastStop != 0 {
+				m.accuracy.Passed(b.ID, b.LastStop, b.updatedAt())
+			}
+		}
+	}
 	m.update(func(next *snapshot) {
 		if changed {
 			next.buses = buses
@@ -139,6 +146,10 @@ func (m *Mode) pollBuses(ctx context.Context) error {
 		next.busesAt = fetchedAt
 	})
 	return nil
+}
+
+func (m *Mode) Accuracy() *Accuracy {
+	return m.accuracy
 }
 
 func (m *Mode) pollETAs(ctx context.Context) {
@@ -173,6 +184,10 @@ func (m *Mode) pollStopETAs(ctx context.Context, stopID int) error {
 		entry := stopETAs{fetchedAt: fetchedAt, byBus: previous.byBus}
 		if changed || !known {
 			entry.byBus = arrivals(response, stopID)
+			calculatedAt := time.Unix(response.CalculationTime, 0)
+			for busID, at := range entry.byBus {
+				m.accuracy.Predicted(busID, stopID, calculatedAt, at)
+			}
 		}
 		next.etas = maps.Clone(next.etas)
 		if next.etas == nil {
@@ -244,14 +259,17 @@ func (s *snapshot) stopsWithFreshBuses(now time.Time) []int {
 	return stops
 }
 
-func (s *snapshot) lookup(now time.Time) etaLookup {
+func (s *snapshot) lookup(now time.Time, accuracy *Accuracy) etaLookup {
 	return func(stopID, busID int) (time.Time, bool) {
 		entry, ok := s.etas[stopID]
 		if !ok || now.Sub(entry.fetchedAt) > etasFreshFor {
 			return time.Time{}, false
 		}
 		at, ok := entry.byBus[busID]
-		return at, ok
+		if !ok {
+			return time.Time{}, false
+		}
+		return at.Add(accuracy.Correction(at.Sub(entry.fetchedAt))), true
 	}
 }
 
@@ -264,168 +282,84 @@ func (s *snapshot) etasFresh(now time.Time) bool {
 	return false
 }
 
-type nearbyStop struct {
-	stop   stop
-	meters float64
-}
-
-func nearest(stops map[int]stop, served map[int]bool, to geo.LatLon) []stop {
-	var nearby []nearbyStop
-	for id := range served {
-		s, ok := stops[id]
-		if !ok {
-			continue
-		}
-		if meters := geo.Distance(s.at(), to); meters <= nearbyMeters {
-			nearby = append(nearby, nearbyStop{stop: s, meters: meters})
-		}
-	}
-	sort.Slice(nearby, func(i, j int) bool {
-		if nearby[i].meters != nearby[j].meters {
-			return nearby[i].meters < nearby[j].meters
-		}
-		return nearby[i].stop.ID < nearby[j].stop.ID
-	})
-	if len(nearby) > nearbyStopsKept {
-		nearby = nearby[:nearbyStopsKept]
-	}
-	found := make([]stop, len(nearby))
-	for i, n := range nearby {
-		found[i] = n.stop
-	}
-	return found
-}
-
-type candidate struct {
-	line   *line
-	board  stop
-	alight stop
-	pass   pass
-	score  time.Time
-}
-
-func (m *Mode) Options(ctx context.Context, trip plan.Trip) ([]plan.Option, error) {
+func (m *Mode) Network(ctx context.Context, query plan.Query) (plan.Network, error) {
 	now := m.now()
 	snap := m.current.Load()
 	fresh := snap.freshBuses(now)
-	if len(fresh) == 0 || !snap.etasFresh(now) {
-		return nil, nil
+	if len(fresh) == 0 {
+		return plan.Network{}, nil
 	}
+	m.refreshNear(ctx, snap, fresh, now, query.Origin, query.Destination)
+	snap = m.current.Load()
+	if !snap.etasFresh(now) {
+		return plan.Network{}, nil
+	}
+	etas := snap.lookup(now, m.accuracy)
+	var network plan.Network
+	for routeID, buses := range fresh {
+		l := snap.lines[routeID]
+		for _, b := range buses {
+			if ride, ok := l.ride(b, snap.stops, etas, now, query.Until); ok {
+				network.Rides = append(network.Rides, ride)
+			}
+		}
+	}
+	return network, nil
+}
+
+func (m *Mode) refreshNear(ctx context.Context, snap *snapshot, fresh map[int][]bus, now time.Time, places ...geo.LatLon) {
 	served := map[int]bool{}
 	for routeID := range fresh {
 		for _, id := range snap.lines[routeID].stops {
 			served[id] = true
 		}
 	}
-	boards := nearest(snap.stops, served, trip.Origin.At)
-	alights := nearest(snap.stops, served, trip.Destination.At)
-	if len(boards) == 0 || len(alights) == 0 {
-		return nil, nil
-	}
-	from := []geo.LatLon{trip.Origin.At}
-	for _, s := range alights {
-		from = append(from, s.at())
-	}
-	var to []geo.LatLon
-	for _, s := range boards {
-		to = append(to, s.at())
-	}
-	to = append(to, trip.Destination.At)
-	walks, err := m.streets.Matrix(ctx, from, to, streets.Walking)
-	if err != nil {
-		return nil, err
-	}
-	etas := snap.lookup(now)
-	best := map[int]candidate{}
-	for routeID, buses := range fresh {
-		l := snap.lines[routeID]
-		for bi, board := range boards {
-			walkArrival := trip.DepartAt.Add(walks[0][bi])
-			for ai, alight := range alights {
-				if board.ID == alight.ID {
-					continue
-				}
-				egress := time.Duration(float64(walks[ai+1][len(boards)]) * walkRankingSlack)
-				for _, b := range buses {
-					p, ok := l.plan(b, board.ID, alight.ID, etas, &m.observations, walkArrival, now)
-					if !ok {
-						continue
-					}
-					c := candidate{line: l, board: board, alight: alight, pass: p, score: p.alightAt.Add(p.lateBy).Add(egress)}
-					if existing, ok := best[routeID]; !ok || c.score.Before(existing.score) {
-						best[routeID] = c
-					}
-				}
+	wanted := map[int]bool{}
+	for _, at := range places {
+		for _, id := range nearestStops(snap.stops, served, at) {
+			if entry, ok := snap.etas[id]; !ok || now.Sub(entry.fetchedAt) > requestETAAge {
+				wanted[id] = true
 			}
 		}
 	}
-	ranked := make([]candidate, 0, len(best))
-	for _, c := range best {
-		ranked = append(ranked, c)
+	if len(wanted) == 0 {
+		return
 	}
-	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score.Before(ranked[j].score) })
-	if len(ranked) > optionsKept {
-		ranked = ranked[:optionsKept]
+	ctx, cancel := context.WithTimeout(ctx, requestETAWait)
+	defer cancel()
+	var group sync.WaitGroup
+	for id := range wanted {
+		group.Add(1)
+		go func(id int) {
+			defer group.Done()
+			if err := m.pollStopETAs(ctx, id); err != nil && ctx.Err() == nil {
+				log.Printf("shuttle: eta %d: %v", id, err)
+			}
+		}(id)
 	}
-	var options []plan.Option
-	for _, c := range ranked {
-		option, ok, err := m.option(ctx, trip, c, etas, now)
-		if err != nil {
-			return options, err
+	group.Wait()
+}
+
+func nearestStops(stops map[int]stop, served map[int]bool, to geo.LatLon) []int {
+	type near struct {
+		id     int
+		meters float64
+	}
+	var found []near
+	for id := range served {
+		if s, ok := stops[id]; ok {
+			if meters := geo.Distance(s.at(), to); meters <= requestETAMeters {
+				found = append(found, near{id: id, meters: meters})
+			}
 		}
-		if ok {
-			options = append(options, option)
-		}
 	}
-	return options, nil
-}
-
-func (m *Mode) option(ctx context.Context, trip plan.Trip, c candidate, etas etaLookup, now time.Time) (plan.Option, bool, error) {
-	boardPoint := stopPoint(c.board)
-	alightPoint := stopPoint(c.alight)
-	access, err := plan.WalkLeg(ctx, m.streets, trip.Origin, boardPoint, trip.DepartAt)
-	if err != nil {
-		return plan.Option{}, false, err
+	sort.Slice(found, func(i, j int) bool { return found[i].meters < found[j].meters })
+	if len(found) > requestETAStops {
+		found = found[:requestETAStops]
 	}
-	p, ok := c.line.plan(c.pass.bus, c.board.ID, c.alight.ID, etas, &m.observations, access.ArriveAt, now)
-	if !ok {
-		return plan.Option{}, false, nil
+	ids := make([]int, len(found))
+	for i, f := range found {
+		ids[i] = f.id
 	}
-	ride := c.line.leg(p, boardPoint, alightPoint)
-	egress, err := plan.WalkLeg(ctx, m.streets, alightPoint, trip.Destination, ride.ArriveAt)
-	if err != nil {
-		return plan.Option{}, false, err
-	}
-	egress.ArriveAtLate = egress.ArriveAtLate.Add(p.lateBy)
-	return plan.Option{Legs: []plan.Leg{access, ride, egress}}, true, nil
-}
-
-func (l *line) leg(p pass, from, to plan.Point) plan.Leg {
-	heading := p.bus.Heading
-	return plan.Leg{
-		Mode:         plan.Shuttle,
-		From:         from,
-		To:           to,
-		DepartAt:     p.boardAt,
-		ArriveAt:     p.alightAt,
-		ArriveAtLate: p.alightAt.Add(p.lateBy),
-		Path:         l.legPath(p.passage.board, p.passage.alight),
-		Line: &plan.Line{
-			ID:    "shuttle:line:" + strconv.Itoa(l.id),
-			Name:  l.name,
-			Color: l.color,
-			Path:  l.path,
-		},
-		StopCount: p.passage.stopCount,
-		Vehicle: &plan.Vehicle{
-			ID:      "shuttle:bus:" + strconv.Itoa(p.bus.ID),
-			Name:    p.bus.Name,
-			At:      geo.LatLon{Lat: p.bus.Lat, Lon: p.bus.Lon},
-			Heading: &heading,
-		},
-	}
-}
-
-func stopPoint(s stop) plan.Point {
-	return plan.Point{ID: "shuttle:" + strconv.Itoa(s.ID), Name: s.Name, At: s.at()}
+	return ids
 }

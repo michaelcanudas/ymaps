@@ -43,14 +43,13 @@ func main() {
 	}
 
 	planner := plan.Planner{
-		Streets:        roads,
-		CentsPerMinute: 50,
-		ModeTimeout:    3 * time.Second,
+		Streets:     roads,
+		ModeTimeout: 3 * time.Second,
 		Modes: []plan.Mode{
-			shuttle.New(roads),
-			bus.New(roads),
-			gbfs.NewBike(roads, os.Getenv("RIDE_NEW_HAVEN_GBFS_KEY")),
-			gbfs.NewVeo(roads),
+			shuttle.New(),
+			bus.New(),
+			gbfs.NewBike(os.Getenv("RIDE_NEW_HAVEN_GBFS_KEY")),
+			gbfs.NewVeo(nil),
 		},
 	}
 	planner.Run(ctx)

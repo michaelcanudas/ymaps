@@ -71,7 +71,7 @@ Every plan currently reads $1.00 unlock plus $0.40 per minute (`price` plus `per
 - Start: a vehicle that is not disabled or reserved, with `current_range_meters` at least 1.3 × the ride distance plus 500 m.
 - End: a drop-off spot near the destination. See below.
 - Cost: from the vehicle's `pricing_plan_id`. Plans are marked `is_taxable`; Connecticut sales tax is 6.35%.
-- Speed: scooter 15 km/h at p50 and 12 km/h at p90, e-bike 17 km/h at p50. Add 1 minute to unlock and park at p50 and 2.5 at p90, plus 2 minutes at p90 to find the vehicle, since positions jitter 5 to 50 m.
+- Speed: scooter 13 km/h, e-bike 15 km/h. Add 3 minutes to find, unlock, and park, since positions jitter 5 to 50 m and parking needs a photo.
 - Still there on arrival: discount a vehicle by how long the walk is. Fall back to other vehicles at the same spot.
 
 ## Drop-off spots: open

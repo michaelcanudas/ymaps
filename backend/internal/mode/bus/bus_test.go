@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -38,19 +39,30 @@ func loadedMode(t *testing.T, now time.Time) *Mode {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := New(streets.Estimate{})
+	m := New()
 	m.now = func() time.Time { return now }
 	m.schedule.Store(s)
 	return m
 }
 
-func options(t *testing.T, m *Mode, departAt time.Time) []plan.Option {
+func rides(t *testing.T, m *Mode, departAt time.Time) []plan.Ride {
 	t.Helper()
-	found, err := m.Options(context.Background(), plan.Trip{Origin: origin, Destination: destination, DepartAt: departAt})
+	query := plan.Query{Origin: origin.At, Destination: destination.At, DepartAt: departAt, Until: departAt.Add(departureWindow)}
+	found, err := m.Network(context.Background(), query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return found
+	sort.Slice(found.Rides, func(i, j int) bool { return found.Rides[i].Stops[0].Depart.Before(found.Rides[j].Stops[0].Depart) })
+	return found.Rides
+}
+
+func stopAt(ride plan.Ride, id string) plan.StopTime {
+	for _, s := range ride.Stops {
+		if s.Stop.ID == id {
+			return s
+		}
+	}
+	return plan.StopTime{}
 }
 
 func TestParseKeepsOnlyNewHaven(t *testing.T) {
@@ -85,55 +97,50 @@ func TestParseKeepsOnlyNewHaven(t *testing.T) {
 	}
 }
 
-func TestOptionsBuildWalkBusWalk(t *testing.T) {
+func TestNetworkListsTripsWithStopTimes(t *testing.T) {
 	departAt := at("2026-11-17 07:55:00")
-	m := loadedMode(t, departAt)
-	found := options(t, m, departAt)
+	found := rides(t, loadedMode(t, departAt), departAt)
 	if len(found) != 2 {
-		t.Fatalf("options %d", len(found))
+		t.Fatalf("rides %d", len(found))
 	}
 	first := found[0]
-	if len(first.Legs) != 3 || first.Legs[0].Mode != plan.Walk || first.Legs[1].Mode != plan.Bus || first.Legs[2].Mode != plan.Walk {
-		t.Fatalf("legs %+v", first.Legs)
+	if len(first.Stops) != 4 || first.Stops[0].Stop.ID != "bus:A" || first.Stops[0].Stop.Name != "Chapel St @ College St" {
+		t.Fatalf("stops %+v", first.Stops)
 	}
-	walkTo, bus, walkFrom := first.Legs[0], first.Legs[1], first.Legs[2]
-	if !bus.DepartAt.Equal(at("2026-11-17 08:00:00")) || !bus.ArriveAt.Equal(at("2026-11-17 08:09:00")) {
-		t.Fatalf("bus %v %v", bus.DepartAt, bus.ArriveAt)
+	if !stopAt(first, "bus:A").Depart.Equal(at("2026-11-17 08:00:00")) || !stopAt(first, "bus:D").Arrive.Equal(at("2026-11-17 08:09:00")) {
+		t.Fatalf("times %+v", first.Stops)
 	}
-	if !bus.ArriveAtLate.Equal(bus.ArriveAt.Add(lateMarginSchedule)) {
-		t.Fatalf("late %v", bus.ArriveAtLate)
+	if first.Line.ID != "16228" || first.Line.Name != "228 Whitney Ave" || first.Line.Color != "3535FF" || len(first.Line.Path) != 7 {
+		t.Fatalf("line %+v", first.Line)
 	}
-	if walkTo.DepartAt.Before(departAt) || walkTo.ArriveAt.After(bus.DepartAt) {
-		t.Fatalf("walk to stop %v %v", walkTo.DepartAt, walkTo.ArriveAt)
+	if first.Headsign != "Hamden Plaza" || first.Fare.Cents != fareCents || first.Fare.Group != fareGroup || first.Vehicle != nil {
+		t.Fatalf("ride %q %+v %v", first.Headsign, first.Fare, first.Vehicle)
 	}
-	if bus.DepartAt.Sub(walkTo.ArriveAt) != boardingBuffer {
-		t.Fatalf("buffer %v", bus.DepartAt.Sub(walkTo.ArriveAt))
+	if path := first.Path(0, 3); len(path) != 7 || path[0] != (geo.LatLon{Lat: 41.3, Lon: -72.93}) {
+		t.Fatalf("path %v", path)
 	}
-	if !walkFrom.DepartAt.Equal(bus.ArriveAt) || walkFrom.ArriveAtLate.Before(bus.ArriveAtLate) {
-		t.Fatalf("walk from stop %v %v", walkFrom.DepartAt, walkFrom.ArriveAtLate)
-	}
-	if bus.From.ID != "bus:A" || bus.To.ID != "bus:D" || bus.From.Name != "Chapel St @ College St" {
-		t.Fatalf("points %+v %+v", bus.From, bus.To)
-	}
-	if bus.Line.ID != "16228" || bus.Line.Name != "228 Whitney Ave" || bus.Line.Color != "3535FF" || len(bus.Line.Path) != 7 {
-		t.Fatalf("line %+v", bus.Line)
-	}
-	if bus.Headsign != "Hamden Plaza" || bus.StopCount != 3 || bus.CostCents != fareCents || first.CostCents() != fareCents {
-		t.Fatalf("bus %q %d %d", bus.Headsign, bus.StopCount, bus.CostCents)
-	}
-	if len(bus.Path) != 7 || bus.Path[0] != (geo.LatLon{Lat: 41.3, Lon: -72.93}) {
-		t.Fatalf("path %v", bus.Path)
-	}
-	if bus.Vehicle != nil {
-		t.Fatal("vehicle without realtime")
-	}
-	second := found[1].Legs[1]
-	if !second.DepartAt.Equal(at("2026-11-17 08:30:00")) || len(second.Path) != 7 {
-		t.Fatalf("second %v path %d", second.DepartAt, len(second.Path))
+	if !found[1].Stops[0].Depart.Equal(at("2026-11-17 08:30:00")) {
+		t.Fatalf("second %v", found[1].Stops[0].Depart)
 	}
 }
 
-func TestOptionsApplyRealtime(t *testing.T) {
+func TestPlannerRidesTheBus(t *testing.T) {
+	departAt := at("2026-11-17 07:55:00")
+	planner := plan.Planner{Streets: streets.Estimate{}, Modes: []plan.Mode{loadedMode(t, departAt)}}
+	option, err := planner.Plan(context.Background(), plan.Trip{Origin: origin, Destination: destination, DepartAt: departAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(option.Legs) != 3 || option.Legs[1].Mode != plan.Bus || option.Legs[1].StopCount != 3 || option.CostCents() != fareCents {
+		t.Fatalf("legs %+v", option.Legs)
+	}
+	walk, bus := option.Legs[0], option.Legs[1]
+	if walk.ArriveAt.After(bus.DepartAt) || !option.Legs[2].DepartAt.Equal(bus.ArriveAt) {
+		t.Fatal("legs do not chain")
+	}
+}
+
+func TestNetworkAppliesRealtime(t *testing.T) {
 	departAt := at("2026-11-17 07:55:00")
 	m := loadedMode(t, departAt)
 	s := m.schedule.Load()
@@ -150,25 +157,21 @@ func TestOptionsApplyRealtime(t *testing.T) {
 	}
 	m.updates.Store(updates)
 	m.positions.Store(positions)
-	found := options(t, m, departAt)
-	bus := found[0].Legs[1]
-	if !bus.DepartAt.Equal(at("2026-11-17 08:02:00")) || !bus.ArriveAt.Equal(at("2026-11-17 08:12:00")) {
-		t.Fatalf("bus %v %v", bus.DepartAt, bus.ArriveAt)
+	first := rides(t, m, departAt)[0]
+	if !stopAt(first, "bus:A").Depart.Equal(at("2026-11-17 08:02:00")) || !stopAt(first, "bus:D").Arrive.Equal(at("2026-11-17 08:12:00")) {
+		t.Fatalf("times %+v", first.Stops)
 	}
-	if !bus.ArriveAtLate.Equal(bus.ArriveAt.Add(lateMarginRealtime)) {
-		t.Fatalf("late %v", bus.ArriveAtLate)
-	}
-	if bus.Vehicle == nil || bus.Vehicle.Name != "1432" || bus.Vehicle.Heading == nil || *bus.Vehicle.Heading != 10 {
-		t.Fatalf("vehicle %+v", bus.Vehicle)
+	if first.Vehicle == nil || first.Vehicle.Name != "1432" || first.Vehicle.Heading == nil || *first.Vehicle.Heading != 10 {
+		t.Fatalf("vehicle %+v", first.Vehicle)
 	}
 	m.now = func() time.Time { return departAt.Add(3 * time.Minute) }
-	stale := options(t, m, departAt)[0].Legs[1]
-	if !stale.DepartAt.Equal(at("2026-11-17 08:00:00")) || stale.Vehicle != nil {
-		t.Fatalf("stale realtime used %v", stale.DepartAt)
+	stale := rides(t, m, departAt)[0]
+	if !stale.Stops[0].Depart.Equal(at("2026-11-17 08:00:00")) || stale.Vehicle != nil {
+		t.Fatalf("stale realtime used %v", stale.Stops[0].Depart)
 	}
 }
 
-func TestOptionsDropCanceledAndPassedTrips(t *testing.T) {
+func TestNetworkDropsCanceledAndPassedTrips(t *testing.T) {
 	departAt := at("2026-11-17 07:55:00")
 	m := loadedMode(t, departAt)
 	s := m.schedule.Load()
@@ -192,38 +195,34 @@ func TestOptionsDropCanceledAndPassedTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.updates.Store(updates)
-	if found := options(t, m, departAt); len(found) != 0 {
-		t.Fatalf("options %d", len(found))
+	found := rides(t, m, departAt)
+	if len(found) != 1 || found[0].Stops[0].Stop.ID != "bus:C" {
+		t.Fatalf("rides %+v", found)
 	}
 }
 
-func TestOptionsAfterMidnight(t *testing.T) {
+func TestNetworkAfterMidnight(t *testing.T) {
 	departAt := at("2026-11-18 00:50:00")
-	found := options(t, loadedMode(t, departAt), departAt)
-	if len(found) != 1 {
-		t.Fatalf("options %d", len(found))
-	}
-	bus := found[0].Legs[1]
-	if !bus.DepartAt.Equal(at("2026-11-18 01:00:00")) || bus.Line.Name != "212 Grand Ave" {
-		t.Fatalf("bus %v %s", bus.DepartAt, bus.Line.Name)
+	found := rides(t, loadedMode(t, departAt), departAt)
+	if len(found) != 1 || !found[0].Stops[0].Depart.Equal(at("2026-11-18 01:00:00")) || found[0].Line.Name != "212 Grand Ave" {
+		t.Fatalf("rides %+v", found)
 	}
 }
 
-func TestOptionsRespectCalendarDates(t *testing.T) {
+func TestNetworkRespectsCalendarDates(t *testing.T) {
 	departAt := at("2026-11-26 07:55:00")
-	if found := options(t, loadedMode(t, departAt), departAt); len(found) != 0 {
-		t.Fatalf("options on a removed date %d", len(found))
+	if found := rides(t, loadedMode(t, departAt), departAt); len(found) != 0 {
+		t.Fatalf("rides on a removed date %d", len(found))
 	}
 	saturday := at("2026-11-21 07:55:00")
-	if found := options(t, loadedMode(t, saturday), saturday); len(found) != 0 {
-		t.Fatalf("options on Saturday %d", len(found))
+	if found := rides(t, loadedMode(t, saturday), saturday); len(found) != 0 {
+		t.Fatalf("rides on Saturday %d", len(found))
 	}
 }
 
-func TestOptionsNeedSchedule(t *testing.T) {
-	m := New(streets.Estimate{})
-	found, err := m.Options(context.Background(), plan.Trip{Origin: origin, Destination: destination, DepartAt: at("2026-11-17 07:55:00")})
-	if err != nil || found != nil {
+func TestNetworkNeedsSchedule(t *testing.T) {
+	found, err := New().Network(context.Background(), plan.Query{Origin: origin.At, Destination: destination.At, DepartAt: at("2026-11-17 07:55:00")})
+	if err != nil || found.Rides != nil {
 		t.Fatalf("%v %v", found, err)
 	}
 }
@@ -242,7 +241,7 @@ func TestRefreshScheduleUsesIfModifiedSince(t *testing.T) {
 		w.Write(archive)
 	}))
 	defer server.Close()
-	m := New(streets.Estimate{})
+	m := New()
 	m.scheduleURL = server.URL
 	if err := m.refreshSchedule(context.Background()); err != nil {
 		t.Fatal(err)

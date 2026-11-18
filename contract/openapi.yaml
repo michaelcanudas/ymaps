@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: ymaps
-  version: 0.2.0
+  version: 0.3.0
   description: |
     The only interface between the ymaps backend and its frontends.
     The server implements this file. Clients call only these operations.
@@ -133,6 +133,33 @@ components:
         placeId:
           type: string
           description: A place the student picked from a 422 response. Overrides `destination`.
+        preferences:
+          $ref: "#/components/schemas/Preferences"
+    Preferences:
+      type: object
+      additionalProperties: false
+      description: |
+        Hard limits on the route. Without them the backend picks the earliest estimated arrival,
+        treats routes within a few minutes of it as tied, and breaks ties toward less walking and
+        outdoor waiting, then toward free. When no route meets the limits, the default route is returned.
+      properties:
+        maxWalkMinutes:
+          type: integer
+          minimum: 1
+          description: Most total walking the route may contain.
+        maxCostCents:
+          type: integer
+          minimum: 0
+          description: Most the route may cost. `0` allows only free routes.
+        avoidModes:
+          type: array
+          items:
+            type: string
+            enum:
+              - shuttle
+              - bus
+              - bike
+              - veo
     Place:
       type: object
       additionalProperties: false
@@ -191,7 +218,6 @@ components:
         - computedAt
         - departAt
         - arriveAt
-        - arriveAtLate
         - costCents
         - legs
       properties:
@@ -208,11 +234,7 @@ components:
         arriveAt:
           type: string
           format: date-time
-          description: Typical arrival.
-        arriveAtLate:
-          type: string
-          format: date-time
-          description: Arrival on a bad day, the 90th percentile.
+          description: Estimated arrival.
         costCents:
           type: integer
         legs:
@@ -292,7 +314,6 @@ components:
         - to
         - departAt
         - arriveAt
-        - arriveAtLate
         - costCents
         - path
       properties:
@@ -310,9 +331,6 @@ components:
         arriveAt:
           type: string
           format: date-time
-        arriveAtLate:
-          type: string
-          format: date-time
         costCents:
           type: integer
         path:
@@ -326,7 +344,6 @@ components:
         - to
         - departAt
         - arriveAt
-        - arriveAtLate
         - costCents
         - path
         - line
@@ -345,9 +362,6 @@ components:
           format: date-time
           description: When the shuttle leaves the boarding stop.
         arriveAt:
-          type: string
-          format: date-time
-        arriveAtLate:
           type: string
           format: date-time
         costCents:
@@ -369,7 +383,6 @@ components:
         - to
         - departAt
         - arriveAt
-        - arriveAtLate
         - costCents
         - path
         - line
@@ -389,9 +402,6 @@ components:
           format: date-time
           description: When the bus leaves the boarding stop.
         arriveAt:
-          type: string
-          format: date-time
-        arriveAtLate:
           type: string
           format: date-time
         costCents:
@@ -415,7 +425,6 @@ components:
         - to
         - departAt
         - arriveAt
-        - arriveAtLate
         - costCents
         - path
       properties:
@@ -435,9 +444,6 @@ components:
         arriveAt:
           type: string
           format: date-time
-        arriveAtLate:
-          type: string
-          format: date-time
         costCents:
           type: integer
         path:
@@ -453,7 +459,6 @@ components:
         - to
         - departAt
         - arriveAt
-        - arriveAtLate
         - costCents
         - path
         - vehicle
@@ -472,9 +477,6 @@ components:
           type: string
           format: date-time
         arriveAt:
-          type: string
-          format: date-time
-        arriveAtLate:
           type: string
           format: date-time
         costCents:

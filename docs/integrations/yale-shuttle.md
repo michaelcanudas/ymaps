@@ -239,7 +239,7 @@ For each route with a live bus that serves board stop A and alight stop B:
 2. For each bus on the route whose `lastUpdate` is under 60 s old, the wait is its ETA at A.
 3. The ride time is that bus's ETA at B minus its ETA at A. If B has no entry for the bus, or the difference is not positive, use the median of recent observed differences for that route and stop pair, then path distance at 4.5 m/s plus 20 s per stop.
 4. If the wait is shorter than the walk to A, the student misses that pass. Use the next one: add one loop time, which is close to the bus's ETA at its own `lastStop`.
-5. Until our own prediction exists, p50 is the Downtowner ETA and p90 is p50 plus the larger of 2 minutes and 25%.
+5. The estimate is the Downtowner ETA plus the correction measured from our own arrivals. See "Shuttle accuracy" in [routing.md](../routing.md).
 
 ## Slicing the path for a leg
 
@@ -261,8 +261,8 @@ A leg's geometry is the path from the snapped point at A to the snapped point at
 
 1. Log every bus poll. A bus arrives at a stop when `lastStop` changes to it or it comes within 30 m of the stop's snapped point.
 2. Log every ETA poll.
-3. Ride time: p50 and p90 of observed stop-to-stop times per route, segment, and hour of week.
-4. Wait: compare logged ETAs with actual arrivals. p50 is `avg` plus the median error; p90 comes from the error's 90th percentile.
+3. Ride time: observed stop-to-stop times per route, segment, and hour of week.
+4. Wait: compare logged ETAs with actual arrivals. The estimate is `avg` plus the mean error for that horizon.
 
 Keep raw positions for 7 days. Keep arrivals and ETA errors.
 

@@ -16,9 +16,9 @@ Each part sits behind an interface. A part never imports another part's internal
 ```
 place      destination text → candidate places
 provider   data source      → timestamped snapshot
-mode       snapshot + trip  → candidate legs
+mode       snapshot + query → rides and rentals
 streets    points           → walk and ride times, paths
-plan       legs             → scored route
+plan       network          → chosen route
 api        HTTP             → contract
 ```
 
@@ -32,12 +32,12 @@ type Provider interface {
 }
 
 type Mode interface {
-	Legs(ctx context.Context, trip Trip, world World) []Leg
+	Network(ctx context.Context, query Query) (Network, error)
 }
 
 type Streets interface {
 	Matrix(ctx context.Context, from, to []LatLon, profile Profile) ([][]time.Duration, error)
-	Path(ctx context.Context, from, to LatLon, profile Profile) (Polyline, error)
+	Route(ctx context.Context, from, to LatLon, profile Profile) (Trace, error)
 }
 ```
 
@@ -73,40 +73,78 @@ The GBFS reader is shared. Per provider it takes the discovery URL, headers, and
 
 Walking, biking, and scooter times and paths come from a self-hosted [Valhalla](https://github.com/valhalla/valhalla) on OpenStreetMap data for New Haven. Valhalla's `pedestrian` and `bicycle` costing share one graph, and `bicycle` takes a speed per request, which covers bikes and scooters. Its `motor_scooter` costing is for mopeds; do not use it for Veo.
 
-Origins and destinations are any point. Per request, one matrix call covers origin to nearby stops and stations, nearby stops and stations to destination, and origin to destination on foot. Walks between stops and stations are computed when the stop list changes and kept.
+Origins and destinations are any point. Per request, one matrix call covers the origin to the destination and to every stop and pickup within 1.7 km, and another covers every stop and drop-off within 1.7 km to the destination. Walks between stops, and rental ride times during the search, are estimated from distance; the chosen routes are then traced on the street graph.
 
 ## Planning
 
-Candidate routes come from a few shapes:
+Modes do not build routes. Each mode turns its snapshot into a network for the request, and one search builds the route from all of them, so mixed routes such as shuttle → bus, bike → shuttle, or shuttle → shuttle come out of the same search as single-mode ones.
 
+```go
+type Mode interface {
+	Network(ctx context.Context, query Query) (Network, error)
+}
+
+type Network struct {
+	Rides   []Ride
+	Rentals []Rental
+}
 ```
-walk
-walk → shuttle → walk
-walk → bus → walk
-walk → bike → walk
-walk → veo → walk
-walk → shuttle → walk → shuttle → walk
-```
 
-Each mode fills in its legs from the current snapshot. A mode with no fresh data contributes nothing.
+- A `Ride` is one vehicle trip: a shuttle bus over its next two loops, or a CTtransit trip. It lists stops with arrival and departure times, a fare, and the line. Rides that share a fare group, such as CTtransit buses, pay once.
+- A `Rental` is a set of pickups (a station with bikes, a free bike, a Veo vehicle) and drop-offs (a station, a Veo spot). Each pickup carries its speed, range, unlock and parking time, and price.
+- Walking connects any two points: the student to nearby stops and pickups, stops and drop-offs to the destination, and stops to stops within 350 m.
 
-Each leg carries a p50 and a p90 time, so the route has both. Routes are ranked on a late percentile of arrival plus a weight on cost, so a route that is usually fast but sometimes very late loses to a steady one. Uncertainty comes from:
+The query covers points within 2.5 km of the straight line between the student and the destination.
 
-- Shuttle and bus: predicted arrival error, measured from our own logs once they exist
-- Bike and Veo: the chance the vehicle is gone by the time the student walks to it, and time to find and unlock it
+### Search
 
-If trips across town with several bus transfers start to matter, the shapes give way to a general transit search such as RAPTOR. Modes, providers, and streets stay as they are.
+The search is round-based and multi-criteria (McRAPTOR). Round *k* finds routes with *k* rides. Each label at a stop records arrival, walking time, outdoor waiting, cost, and fares paid, and a label survives only if no other label is at least as good on all of them. A round scans every ride from the stops reached in the round before, then every rental from pickups reached on foot, then walks from where those rides ended. Walking to the first stop is counted as walking, but waiting for the first ride is not, because the student leaves later and waits indoors; waiting at a transfer is outdoor waiting.
+
+Rentals have rules of their own:
+
+- Walking to a pickup takes at most 5 minutes.
+- The pickup is never farther from the destination than where the walk to it started.
+- The ride is at least 400 m and ends closer to the destination.
+- A route has at most one rental.
+
+Transit rides shorter than 2 minutes are skipped. The search keeps the best few routes, then each is filled in with real street paths and times and checked again.
+
+### Choosing
+
+There is no exchange rate between minutes and money. The planner picks a route by these steps:
+
+1. A walk of 8 minutes or less wins.
+2. Otherwise, take the earliest estimated arrival. Routes within 3 minutes of it, 5 at night, count as tied.
+3. Among tied routes, prefer less burden: walking minutes, walking beyond 10 minutes counted again, outdoor waiting at 1.5 times, and 3 minutes per transfer. At night walking counts 1.5 times and waiting 2.5 times.
+4. A free route within 4 burden-minutes of the lightest (6 at night) wins over a paid one. Otherwise the lightest wins, then the cheapest.
+
+Night is after dusk and before dawn in New Haven, by month.
+
+A request may carry `preferences`: most walking minutes, most cost in cents (0 for free only), and modes to avoid. They are hard limits. When no route meets them, the default route is returned.
+
+### Estimates
+
+Every time is an estimate; there is no late percentile.
+
+- Shuttle: Downtowner ETAs for each bus, corrected by the error we measure (below), with stops between ETAs interpolated along the line's path. A request fetches fresh ETAs for the stops within 900 m of both ends when the cached ones are older than 20 seconds.
+- Bus: the GTFS schedule plus CTtransit trip updates.
+- Bike: 13 km/h and 2 minutes to unlock and dock.
+- Veo: 13 km/h for scooters, 15 for e-bikes, and 3 minutes to unlock and park.
+
+### Shuttle accuracy
+
+Every ETA poll records the predicted arrival per bus and stop. When a bus's `lastStop` changes, the predictions for that stop are scored against the time the bus passed it, bucketed by how far ahead they were made. The correction per bucket starts at a measured prior and moves to the running mean as observations arrive.
 
 ## Rerouting
 
-The route has an id. When the client checks it again, the planner scores the legs still ahead from the student's current position, and also plans fresh from there. If the fresh route arrives meaningfully earlier at the late percentile, it replaces the old one.
+The route has an id. When the client checks it again, the planner plans fresh from the student's current position with the same place and preferences.
 
 ## What a route carries
 
 Proposed. The client draws its own map; the backend sends shapes, never images.
 
 - The resolved place: name, coordinates, entryway
-- Departure and arrival as absolute times, p50 and p90
+- Departure and estimated arrival as absolute times
 - Total cost
 - Legs, a union keyed by mode. Every leg has `from`, `to`, `departAt`, `arriveAt`, `cost`, and `path`, an encoded polyline of just that leg.
 - Shuttle and bus legs add the line's name and color, board and alight stops, the vehicle's live position, and `line.path`, the whole route, drawn faintly behind the leg.

@@ -16,7 +16,6 @@ import (
 
 	"ymaps/backend/internal/geo"
 	"ymaps/backend/internal/plan"
-	"ymaps/backend/internal/streets"
 )
 
 const (
@@ -33,20 +32,13 @@ const (
 	maxScheduleBytes     = 128 << 20
 	maxRealtimeBytes     = 32 << 20
 
-	stopRadiusMeters   = 600
-	nearbyStopLimit    = 6
-	departureWindow    = 60 * time.Minute
-	earlySlack         = 30 * time.Minute
-	boardingBuffer     = 2 * time.Minute
-	lateMarginRealtime = 3 * time.Minute
-	lateMarginSchedule = 6 * time.Minute
-	walkLateFactor     = 1.1
-	optionLimit        = 4
-	fareCents          = 175
+	departureWindow = 90 * time.Minute
+	earlySlack      = 30 * time.Minute
+	fareCents       = 175
+	fareGroup       = "cttransit"
 )
 
 type Mode struct {
-	streets             streets.Streets
 	client              *http.Client
 	scheduleURL         string
 	tripUpdatesURL      string
@@ -57,9 +49,8 @@ type Mode struct {
 	positions           atomic.Pointer[vehiclePositions]
 }
 
-func New(s streets.Streets) *Mode {
+func New() *Mode {
 	return &Mode{
-		streets:             s,
 		client:              &http.Client{Timeout: 2 * time.Minute},
 		scheduleURL:         scheduleURL,
 		tripUpdatesURL:      tripUpdatesURL,
@@ -197,299 +188,136 @@ func (m *Mode) freshPositions(s *schedule) *vehiclePositions {
 	return positions
 }
 
-type nearbyStop struct {
-	stop int32
-	walk time.Duration
-}
-
-type ride struct {
-	trip     int32
-	date     int32
-	board    nearbyStop
-	alight   nearbyStop
-	boardAt  int32
-	alightAt int32
-	departAt time.Time
-	arriveAt time.Time
-	late     time.Time
-	live     bool
-}
-
-func (m *Mode) Options(ctx context.Context, trip plan.Trip) ([]plan.Option, error) {
+func (m *Mode) Network(_ context.Context, query plan.Query) (plan.Network, error) {
 	s := m.schedule.Load()
 	if s == nil {
-		return nil, nil
+		return plan.Network{}, nil
 	}
-	departAt := trip.DepartAt
+	departAt := query.DepartAt
 	if departAt.IsZero() {
 		departAt = m.now()
 	}
-	boards, err := m.walkTimes(ctx, s, trip.Origin.At, true)
-	if err != nil || len(boards) == 0 {
-		return nil, err
+	until := query.Until
+	if until.IsZero() {
+		until = departAt.Add(departureWindow)
 	}
-	alights, err := m.walkTimes(ctx, s, trip.Destination.At, false)
-	if err != nil || len(alights) == 0 {
-		return nil, err
-	}
-	rides := s.findRides(departAt, boards, alights, m.freshUpdates(s))
+	updates := m.freshUpdates(s)
 	positions := m.freshPositions(s)
-	walksTo := map[int32]plan.Leg{}
-	walksFrom := map[int32]plan.Leg{}
-	var options []plan.Option
-	for _, found := range rides {
-		if len(options) == optionLimit {
-			break
-		}
-		option, ok := m.buildOption(ctx, s, trip, departAt, found, positions, walksTo, walksFrom)
-		if ok {
-			options = append(options, option)
-		}
-	}
-	return options, nil
-}
-
-func (m *Mode) walkTimes(ctx context.Context, s *schedule, at geo.LatLon, toStops bool) ([]nearbyStop, error) {
-	stops := s.nearbyStops(at)
-	if len(stops) == 0 {
-		return nil, nil
-	}
-	points := make([]geo.LatLon, len(stops))
-	for index, number := range stops {
-		points[index] = s.stops[number].at
-	}
-	nearby := make([]nearbyStop, len(stops))
-	if toStops {
-		matrix, err := m.streets.Matrix(ctx, []geo.LatLon{at}, points, streets.Walking)
-		if err != nil {
-			return nil, err
-		}
-		for index, number := range stops {
-			nearby[index] = nearbyStop{stop: number, walk: matrix[0][index]}
-		}
-		return nearby, nil
-	}
-	matrix, err := m.streets.Matrix(ctx, points, []geo.LatLon{at}, streets.Walking)
-	if err != nil {
-		return nil, err
-	}
-	for index, number := range stops {
-		nearby[index] = nearbyStop{stop: number, walk: matrix[index][0]}
-	}
-	return nearby, nil
-}
-
-func (s *schedule) nearbyStops(at geo.LatLon) []int32 {
-	type candidate struct {
-		stop     int32
-		distance float64
-	}
-	var candidates []candidate
+	covered := make([]bool, len(s.stops))
 	for number, found := range s.stops {
-		if found.at == (geo.LatLon{}) || s.visitStart[number] == s.visitStart[number+1] {
-			continue
-		}
-		if distance := geo.Distance(at, found.at); distance <= stopRadiusMeters {
-			candidates = append(candidates, candidate{stop: int32(number), distance: distance})
+		if found.at != (geo.LatLon{}) && s.visitStart[number] != s.visitStart[number+1] && query.Covers(found.at) {
+			covered[number] = true
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].distance < candidates[j].distance })
-	if len(candidates) > nearbyStopLimit {
-		candidates = candidates[:nearbyStopLimit]
-	}
-	stops := make([]int32, len(candidates))
-	for index, found := range candidates {
-		stops[index] = found.stop
-	}
-	return stops
-}
-
-func (s *schedule) findRides(departAt time.Time, boards, alights []nearbyStop, updates *tripUpdates) []ride {
-	alightWalks := make(map[int32]nearbyStop, len(alights))
-	for _, found := range alights {
-		alightWalks[found.stop] = found
-	}
-	latest := departAt.Add(departureWindow)
-	type rideKey struct {
+	type tripDay struct {
 		trip int32
 		date int32
 	}
-	best := map[rideKey]ride{}
+	seen := map[tripDay]bool{}
+	var network plan.Network
 	for _, day := range []serviceDay{serviceDayOf(departAt, -1), serviceDayOf(departAt, 0)} {
-		for _, board := range boards {
-			earliest := departAt.Add(board.walk)
-			if earliest.After(latest) {
+		low := int32(departAt.Add(-earlySlack).Sub(day.base) / time.Second)
+		high := int32(until.Sub(day.base) / time.Second)
+		for number, ok := range covered {
+			if !ok {
 				continue
 			}
-			low := int32(earliest.Add(-earlySlack).Sub(day.base) / time.Second)
-			high := int32(latest.Sub(day.base) / time.Second)
-			visits := s.stopVisits(board.stop)
+			visits := s.stopVisits(int32(number))
 			start := sort.Search(len(visits), func(i int) bool { return s.times[visits[i].position].departure >= low })
 			for _, found := range visits[start:] {
-				boarding := s.times[found.position]
-				if boarding.departure > high {
+				if s.times[found.position].departure > high {
 					break
 				}
-				if boarding.flags&noPickup != 0 {
+				key := tripDay{trip: found.trip, date: day.date}
+				if seen[key] {
 					continue
 				}
-				t := s.trips[found.trip]
-				if !s.active(t.service, day) {
+				seen[key] = true
+				if !s.active(s.trips[found.trip].service, day) {
 					continue
 				}
-				delay, live := tripDelay{}, false
-				if updates != nil {
-					if known, ok := updates.trips[found.trip]; ok && known.date == day.date {
-						if known.canceled {
-							continue
-						}
-						delay, live = known, true
-					}
-				}
-				_, departureDelay, usable := delay.at(boarding.sequence)
-				if !usable {
-					continue
-				}
-				leaves := day.at(boarding.departure + departureDelay)
-				if leaves.Before(earliest) || leaves.After(latest) {
-					continue
-				}
-				margin := lateMarginSchedule
-				if live {
-					margin = lateMarginRealtime
-				}
-				for position := found.position + 1; position < t.first+t.count; position++ {
-					alighting := s.times[position]
-					if alighting.flags&noDropOff != 0 || alighting.stop == board.stop {
-						continue
-					}
-					alight, ok := alightWalks[alighting.stop]
-					if !ok {
-						continue
-					}
-					arrivalDelay, _, usable := delay.at(alighting.sequence)
-					if !usable {
-						continue
-					}
-					arrives := day.at(alighting.arrival + arrivalDelay)
-					if arrives.Before(leaves) {
-						arrives = leaves
-					}
-					candidate := ride{
-						trip:     found.trip,
-						date:     day.date,
-						board:    board,
-						alight:   alight,
-						boardAt:  found.position,
-						alightAt: position,
-						departAt: leaves,
-						arriveAt: arrives,
-						late:     arrives.Add(margin).Add(time.Duration(float64(alight.walk) * walkLateFactor)),
-						live:     live,
-					}
-					key := rideKey{trip: found.trip, date: day.date}
-					if existing, ok := best[key]; !ok || betterRide(candidate, existing) {
-						best[key] = candidate
-					}
+				if ride, ok := s.ride(found.trip, day, covered, departAt, until, updates, positions); ok {
+					network.Rides = append(network.Rides, ride)
 				}
 			}
 		}
 	}
-	rides := make([]ride, 0, len(best))
-	for _, found := range best {
-		rides = append(rides, found)
-	}
-	sort.Slice(rides, func(i, j int) bool { return betterRide(rides[i], rides[j]) })
-	return rides
+	return network, nil
 }
 
-func betterRide(a, b ride) bool {
-	if !a.late.Equal(b.late) {
-		return a.late.Before(b.late)
-	}
-	if walkA, walkB := a.board.walk+a.alight.walk, b.board.walk+b.alight.walk; walkA != walkB {
-		return walkA < walkB
-	}
-	if !a.departAt.Equal(b.departAt) {
-		return a.departAt.After(b.departAt)
-	}
-	return a.trip < b.trip
-}
-
-func (m *Mode) buildOption(ctx context.Context, s *schedule, trip plan.Trip, departAt time.Time, found ride, positions *vehiclePositions, walksTo, walksFrom map[int32]plan.Leg) (plan.Option, bool) {
-	t := s.trips[found.trip]
-	board := s.point(found.board.stop)
-	alight := s.point(found.alight.stop)
-
-	walkTo, ok := walksTo[found.board.stop]
-	if !ok {
-		leg, err := plan.WalkLeg(ctx, m.streets, trip.Origin, board, departAt)
-		if err != nil {
-			return plan.Option{}, false
+func (s *schedule) ride(number int32, day serviceDay, covered []bool, departAt, until time.Time, updates *tripUpdates, positions *vehiclePositions) (plan.Ride, bool) {
+	t := s.trips[number]
+	delay := tripDelay{}
+	if updates != nil {
+		if known, ok := updates.trips[number]; ok && known.date == day.date {
+			if known.canceled {
+				return plan.Ride{}, false
+			}
+			delay = known
 		}
-		walkTo, walksTo[found.board.stop] = leg, leg
 	}
-	slack := found.departAt.Sub(walkTo.ArriveAt)
-	if slack < 0 {
-		return plan.Option{}, false
-	}
-	if shift := slack - boardingBuffer; shift > 0 {
-		walkTo = shiftLeg(walkTo, shift)
-	}
-
-	walkFrom, ok := walksFrom[found.alight.stop]
-	if !ok {
-		leg, err := plan.WalkLeg(ctx, m.streets, alight, trip.Destination, departAt)
-		if err != nil {
-			return plan.Option{}, false
+	var stops []plan.StopTime
+	var used []int32
+	for position := t.first; position < t.first+t.count; position++ {
+		scheduled := s.times[position]
+		if !covered[scheduled.stop] || scheduled.flags&(noPickup|noDropOff) == noPickup|noDropOff {
+			continue
 		}
-		walkFrom, walksFrom[found.alight.stop] = leg, leg
+		arrivalDelay, departureDelay, usable := delay.at(scheduled.sequence)
+		if !usable {
+			continue
+		}
+		arrive := day.at(scheduled.arrival + arrivalDelay)
+		depart := day.at(scheduled.departure + departureDelay)
+		if depart.Before(arrive) {
+			depart = arrive
+		}
+		if depart.Before(departAt) {
+			stops, used = stops[:0], used[:0]
+			continue
+		}
+		if arrive.After(until) {
+			break
+		}
+		if n := len(stops); n > 0 && arrive.Before(stops[n-1].Depart) {
+			arrive = stops[n-1].Depart
+			if depart.Before(arrive) {
+				depart = arrive
+			}
+		}
+		stops = append(stops, plan.StopTime{Stop: s.point(scheduled.stop), Arrive: arrive, Depart: depart})
+		used = append(used, position)
 	}
-
-	margin := lateMarginSchedule
-	if found.live {
-		margin = lateMarginRealtime
+	if len(stops) < 2 {
+		return plan.Ride{}, false
 	}
 	line := s.routes[t.route]
-	bus := plan.Leg{
-		Mode:         plan.Bus,
-		From:         board,
-		To:           alight,
-		DepartAt:     found.departAt,
-		ArriveAt:     found.arriveAt,
-		ArriveAtLate: found.arriveAt.Add(margin),
-		CostCents:    fareCents,
-		Path:         s.legPath(t, found.boardAt, found.alightAt),
+	ride := plan.Ride{
+		Mode: plan.Bus,
 		Line: &plan.Line{
 			ID:    line.id,
 			Name:  lineName(line),
 			Color: line.color,
 			Path:  s.linePath(t),
 		},
-		Headsign:  headsign(t.headsign, line.shortName),
-		StopCount: int(found.alightAt - found.boardAt),
+		Headsign: headsign(t.headsign, line.shortName),
+		Fare:     plan.Fare{Cents: fareCents, Group: fareGroup},
+		Stops:    stops,
+		Path: func(board, alight int) []geo.LatLon {
+			return s.legPath(t, used[board], used[alight])
+		},
 	}
 	if positions != nil {
-		if vehicle, ok := positions.byTrip[found.trip]; ok {
-			bus.Vehicle = &vehicle
+		if vehicle, ok := positions.byTrip[number]; ok {
+			ride.Vehicle = &vehicle
 		}
 	}
-
-	walkFrom = shiftLeg(walkFrom, found.arriveAt.Sub(walkFrom.DepartAt))
-	walkFrom.ArriveAtLate = bus.ArriveAtLate.Add(walkFrom.ArriveAtLate.Sub(walkFrom.DepartAt))
-	return plan.Option{Legs: []plan.Leg{walkTo, bus, walkFrom}}, true
+	return ride, true
 }
 
 func (s *schedule) point(number int32) plan.Point {
 	found := s.stops[number]
 	return plan.Point{ID: "bus:" + found.id, Name: found.name, At: found.at}
-}
-
-func shiftLeg(leg plan.Leg, by time.Duration) plan.Leg {
-	leg.DepartAt = leg.DepartAt.Add(by)
-	leg.ArriveAt = leg.ArriveAt.Add(by)
-	leg.ArriveAtLate = leg.ArriveAtLate.Add(by)
-	return leg
 }
 
 func lineName(r route) string {

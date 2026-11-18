@@ -69,35 +69,6 @@ func fixtureBus(t *testing.T, id int) bus {
 	return bus{}
 }
 
-func TestPassagesWrapAroundTheLoop(t *testing.T) {
-	stops := []int{10, 2, 5, 67, 96, 53, 41, 106, 97, 118, 42, 98, 38, 9, 72, 1, 121, 12, 35, 43}
-	got := passages(stops, 35, 2)
-	if len(got) != 1 || got[0] != (passage{board: 18, alight: 1, stopCount: 3}) {
-		t.Fatalf("passages(35, 2) = %+v", got)
-	}
-	got = passages(stops, 2, 35)
-	if len(got) != 1 || got[0].stopCount != 17 {
-		t.Fatalf("passages(2, 35) = %+v", got)
-	}
-	if got := passages(stops, 2, 999); got != nil {
-		t.Fatalf("passages to unserved stop = %+v", got)
-	}
-}
-
-func TestPassagesWithStopsListedTwice(t *testing.T) {
-	stops := []int{10, 9, 1, 122, 127, 26, 25, 24, 23, 22, 23, 24, 25, 26, 72}
-	got := passages(stops, 25, 26)
-	want := []passage{{board: 6, alight: 13, stopCount: 7}, {board: 12, alight: 13, stopCount: 1}}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("passages(25, 26) = %+v, want %+v", got, want)
-	}
-	got = passages(stops, 26, 25)
-	want = []passage{{board: 5, alight: 6, stopCount: 1}, {board: 13, alight: 6, stopCount: 8}}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("passages(26, 25) = %+v, want %+v", got, want)
-	}
-}
-
 func TestSnappingMakesExactlyOneLoop(t *testing.T) {
 	lines, _ := fixtureLines(t)
 	for _, id := range []int{10, 13, 14} {
@@ -124,7 +95,7 @@ func TestSnappingMakesExactlyOneLoop(t *testing.T) {
 func TestLegPathFollowsTheRouteAndWraps(t *testing.T) {
 	lines, stops := fixtureLines(t)
 	l := lines[13]
-	for _, p := range []passage{{board: 0, alight: 6, stopCount: 6}, {board: 18, alight: 1, stopCount: 3}} {
+	for _, p := range []struct{ board, alight int }{{board: 0, alight: 6}, {board: 18, alight: 1}} {
 		path := l.legPath(p.board, p.alight)
 		if len(path) < 3 {
 			t.Fatalf("passage %+v gave %d points", p, len(path))
@@ -149,60 +120,48 @@ func TestLegPathFollowsTheRouteAndWraps(t *testing.T) {
 	}
 }
 
-func TestPlanUsesDowntownerETAs(t *testing.T) {
-	lines, _ := fixtureLines(t)
+func TestRideFollowsDowntownerETAs(t *testing.T) {
+	lines, stops := fixtureLines(t)
 	etas := fixtureLookup(t)
 	calculatedAt := time.Unix(1794957921, 0)
-	p, ok := lines[14].plan(fixtureBus(t, 69274), 10, 41, etas, &rideObservations{}, fixtureNow, fixtureNow)
+	ride, ok := lines[14].ride(fixtureBus(t, 69274), stops, etas, fixtureNow, fixtureNow.Add(90*time.Minute))
 	if !ok {
-		t.Fatal("no pass")
+		t.Fatal("no ride")
 	}
-	if !p.boardAt.Equal(calculatedAt.Add(25*time.Minute)) || !p.alightAt.Equal(fixtureNow.Add(38*time.Minute)) {
-		t.Fatalf("board %v alight %v", p.boardAt, p.alightAt)
+	var at10 time.Time
+	for j, s := range ride.Stops {
+		if j > 0 && s.Arrive.Before(ride.Stops[j-1].Depart) {
+			t.Fatalf("stop %d goes back in time", j)
+		}
+		if s.Stop.ID == "shuttle:10" && at10.IsZero() {
+			at10 = s.Depart
+		}
 	}
-	if p.passage.stopCount != 4 {
-		t.Fatalf("stop count %d", p.passage.stopCount)
+	if !at10.Equal(calculatedAt.Add(25 * time.Minute)) {
+		t.Fatalf("stop 10 at %v", at10)
 	}
-	if want := lateDelay(p.alightAt.Sub(fixtureNow)); p.lateBy != want || want <= minimumLateDelay {
-		t.Fatalf("late by %v, want %v", p.lateBy, want)
+	if ride.Fare.Cents != 0 || ride.Line == nil || ride.Vehicle == nil || len(ride.Path(0, 3)) < 2 {
+		t.Fatalf("ride incomplete: %+v", ride)
 	}
 }
 
-func TestPlanTakesTheNextPassWhenTheWalkIsLonger(t *testing.T) {
-	lines, _ := fixtureLines(t)
-	etas := fixtureLookup(t)
-	l := lines[14]
-	b := fixtureBus(t, 69274)
-	early, _ := l.plan(b, 10, 41, etas, &rideObservations{}, fixtureNow, fixtureNow)
-	late, ok := l.plan(b, 10, 41, etas, &rideObservations{}, early.boardAt.Add(time.Minute), fixtureNow)
-	if !ok {
-		t.Fatal("no later pass")
+func TestAccuracyLearnsFromArrivals(t *testing.T) {
+	a := NewAccuracy([]time.Duration{-30 * time.Second, 0, 0, 0, 0})
+	if got := a.Correction(time.Minute); got != -30*time.Second {
+		t.Fatalf("prior %v", got)
 	}
-	loop := late.boardAt.Sub(early.boardAt)
-	if loop != l.estimatedLoop() {
-		t.Fatalf("loop %v, want %v", loop, l.estimatedLoop())
+	start := time.Unix(1794957921, 0)
+	for i := 0; i < 40; i++ {
+		madeAt := start.Add(time.Duration(i) * time.Hour)
+		a.Predicted(1, 7, madeAt, madeAt.Add(8*time.Minute))
+		a.Passed(1, 7, madeAt.Add(7*time.Minute))
+		a.Passed(1, 8, madeAt.Add(9*time.Minute))
 	}
-	if late.alightAt.Sub(late.boardAt) != early.alightAt.Sub(early.boardAt) {
-		t.Fatal("ride time changed across passes")
+	if got := a.Correction(8 * time.Minute); got > -50*time.Second || got < -61*time.Second {
+		t.Fatalf("learned %v, want about -1m", got)
 	}
-}
-
-func TestPlanFallsBackWhenTheBusReachesTheAlightStopFirst(t *testing.T) {
-	lines, _ := fixtureLines(t)
-	etas := fixtureLookup(t)
-	l := lines[14]
-	p, ok := l.plan(fixtureBus(t, 69273), 10, 41, etas, &rideObservations{}, fixtureNow, fixtureNow)
-	if !ok {
-		t.Fatal("no pass")
-	}
-	if got, want := p.alightAt.Sub(p.boardAt), l.estimatedRide(p.passage); got != want {
-		t.Fatalf("ride %v, want estimate %v", got, want)
-	}
-	observations := &rideObservations{}
-	observations.record(rideKey{route: 14, board: 10, alight: 41}, 9*time.Minute)
-	p, _ = l.plan(fixtureBus(t, 69273), 10, 41, etas, observations, fixtureNow, fixtureNow)
-	if got := p.alightAt.Sub(p.boardAt); got != 9*time.Minute {
-		t.Fatalf("ride %v, want observed median", got)
+	if got := a.Correction(time.Minute); got != -30*time.Second {
+		t.Fatalf("other bucket changed to %v", got)
 	}
 }
 
@@ -231,10 +190,10 @@ func fixtureServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-func TestOptionsBuildsConsistentWalkShuttleWalk(t *testing.T) {
+func TestNetworkFromLiveFeeds(t *testing.T) {
 	server := fixtureServer(t)
 	defer server.Close()
-	m := newMode(streets.Estimate{}, server.URL)
+	m := newMode(server.URL)
 	m.now = func() time.Time { return fixtureNow }
 	ctx := context.Background()
 	for _, poll := range []func(context.Context) error{m.pollStops, m.pollRoutes, m.pollBuses} {
@@ -246,43 +205,28 @@ func TestOptionsBuildsConsistentWalkShuttleWalk(t *testing.T) {
 	if err := m.pollRoutes(ctx); err != nil || m.current.Load() != before {
 		t.Fatal("unchanged routes replaced the snapshot")
 	}
-	for _, id := range m.current.Load().stopsWithFreshBuses(fixtureNow) {
-		if err := m.pollStopETAs(ctx, id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	trip := plan.Trip{
-		Origin:      plan.Point{At: geo.LatLon{Lat: 41.3030, Lon: -72.9350}},
-		Destination: plan.Point{At: geo.LatLon{Lat: 41.3108, Lon: -72.9258}},
+	query := plan.Query{
+		Origin:      geo.LatLon{Lat: 41.3030, Lon: -72.9350},
+		Destination: geo.LatLon{Lat: 41.3108, Lon: -72.9258},
 		DepartAt:    fixtureNow,
+		Until:       fixtureNow.Add(90 * time.Minute),
 	}
-	options, err := m.Options(ctx, trip)
+	network, err := m.Network(ctx, query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(options) == 0 || len(options) > optionsKept {
-		t.Fatalf("%d options", len(options))
+	if len(network.Rides) == 0 {
+		t.Fatal("no rides")
 	}
-	for _, option := range options {
-		access, ride, egress := option.Legs[0], option.Legs[1], option.Legs[2]
-		if access.Mode != plan.Walk || ride.Mode != plan.Shuttle || egress.Mode != plan.Walk {
-			t.Fatalf("modes %s %s %s", access.Mode, ride.Mode, egress.Mode)
-		}
-		if access.To != ride.From || ride.To != egress.From || ride.From.ID == "" {
-			t.Fatal("legs do not connect at shuttle stops")
-		}
-		if access.ArriveAt.After(ride.DepartAt) || !egress.DepartAt.Equal(ride.ArriveAt) {
-			t.Fatal("leg times are inconsistent")
-		}
-		if lateBy := ride.ArriveAtLate.Sub(ride.ArriveAt); egress.ArriveAtLate.Sub(egress.ArriveAt) < lateBy {
-			t.Fatal("final walk dropped the shuttle's late delay")
-		}
-		if ride.Line == nil || ride.Vehicle == nil || len(ride.Line.Path) == 0 || len(ride.Path) < 2 || ride.StopCount < 1 {
-			t.Fatalf("shuttle leg incomplete: %+v", ride)
-		}
+	if _, ok := m.current.Load().etas[10]; !ok {
+		t.Fatal("request did not fetch etas near the student")
+	}
+	planner := plan.Planner{Streets: streets.Estimate{}, Modes: []plan.Mode{m}}
+	if _, err := planner.Plan(ctx, plan.Trip{Origin: plan.Point{At: query.Origin}, Destination: plan.Point{At: query.Destination}, DepartAt: fixtureNow}); err != nil {
+		t.Fatal(err)
 	}
 	m.now = func() time.Time { return fixtureNow.Add(2 * time.Minute) }
-	if options, _ := m.Options(ctx, trip); options != nil {
-		t.Fatal("stale feeds still produced options")
+	if network, _ := m.Network(ctx, query); network.Rides != nil {
+		t.Fatal("stale feeds still produced rides")
 	}
 }
