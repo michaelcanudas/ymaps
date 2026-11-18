@@ -19,6 +19,8 @@ func TestResolveExactAlias(t *testing.T) {
 		"JE":                "alias:jonathan-edwards",
 		"jonathan edwards'": "alias:jonathan-edwards",
 		"science-hill":      "alias:science-hill",
+		"train station":     "alias:union-station",
+		"West Campus":       "alias:west-campus",
 		"Cross Campus":      "alias:cross-campus",
 	}
 	for query, want := range cases {
@@ -50,10 +52,10 @@ func TestLookup(t *testing.T) {
 	}
 }
 
-func TestSeedIsOnCampus(t *testing.T) {
+func TestSeedIsNearCampus(t *testing.T) {
 	campus := geo.LatLon{Lat: 41.3110, Lon: -72.9270}
 	for id, p := range New().byID {
-		if geo.Distance(campus, p.At) > 2000 {
+		if geo.Distance(campus, p.At) > 10000 {
 			t.Errorf("%s is %.0f m from campus", id, geo.Distance(campus, p.At))
 		}
 	}

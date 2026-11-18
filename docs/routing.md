@@ -49,9 +49,16 @@ Resolvers run in order. Their candidates are merged and ranked by confidence and
 
 | Order | Resolver | Answers |
 | --- | --- | --- |
-| 1 | Aliases | Our own terms: `silliman buttery`, crowdsourced entryways |
+| 1 | Aliases | Our own terms: `silliman buttery`, `train station`, crowdsourced entryways. An alias names one building or place, never an area that would shadow the buildings inside it. |
+| 1b | Courses | `ACCT 270`, `acct2700`, `CPSC 223`: course code to the building where it last met. See below. |
 | 2 | Yale map | Buildings, abbreviations like `WLH`, course locations like `ACCT 270`, entrances, dining halls. See [yale-map.md](integrations/yale-map.md). |
 | 3 | Google Places | Any store, address, or landmark |
+
+Candidates from different resolvers that name the same place within 150 m count as one. Google results at the same spot are merged under the most specific name, and a station Google names after its city ("New Haven") becomes "New Haven Station".
+
+### Courses
+
+Yale stopped publishing meeting rooms after Spring 2025, and CourseTable's public API has none. The course table in `backend/internal/place/course/courses.json` comes from CourseTable's ferry data for Spring 2025, Fall 2024, Spring 2024, and Fall 2023, newest first: course code to Concept3D location id or building code. Codes accept the old three-digit and new four-digit numbers (`ACCT 270` and `ACCT 2700`). A course not in the table falls back to the building where most of its subject met, at lower confidence. Rooms may have moved since; refresh the table when a newer source has rooms.
 
 Aliases start as a file in the backend and later become stored, crowdsourced data. A confident early answer stops the chain. When no candidate is clearly best, the response asks the student to choose.
 

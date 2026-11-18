@@ -144,3 +144,18 @@ func TestLookup(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestMergeKeepsTheSpecificName(t *testing.T) {
+	results := []result{
+		{ID: "a", PrimaryType: "train_station", FormattedAddress: "50 Union Ave, New Haven, CT 06519, USA", Location: latLng{Latitude: 41.29755, Longitude: -72.92662}},
+		{ID: "b", PrimaryType: "transportation_service", FormattedAddress: "50 Union Ave, New Haven, CT 06519, USA", Location: latLng{Latitude: 41.29768, Longitude: -72.92668}},
+		{ID: "c", PrimaryType: "train_station", FormattedAddress: "20 Railroad Ave, West Haven, CT 06516, USA", Location: latLng{Latitude: 41.27115, Longitude: -72.96330}},
+	}
+	results[0].DisplayName.Text = "New Haven"
+	results[1].DisplayName.Text = "New Haven Union Station"
+	results[2].DisplayName.Text = "West Haven"
+	merged := merge(results)
+	if len(merged) != 2 || merged[0].ID != "google:a" || merged[0].Name != "New Haven Union Station" || merged[1].Name != "West Haven Station" {
+		t.Fatalf("merged %+v", merged)
+	}
+}

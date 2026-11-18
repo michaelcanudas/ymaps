@@ -12,6 +12,7 @@ import (
 	"ymaps/backend/internal/mode/shuttle"
 	"ymaps/backend/internal/place"
 	"ymaps/backend/internal/place/alias"
+	"ymaps/backend/internal/place/course"
 	"ymaps/backend/internal/place/google"
 	"ymaps/backend/internal/place/yalemap"
 	"ymaps/backend/internal/plan"
@@ -38,6 +39,7 @@ func main() {
 
 	places := place.Chain{
 		alias.New(),
+		course.New(yale),
 		yale,
 		google.New(os.Getenv("GOOGLE_MAPS_KEY")),
 	}

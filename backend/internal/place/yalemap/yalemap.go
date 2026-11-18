@@ -33,6 +33,9 @@ const (
 	tokenBaseConfidence    = 0.5
 	tokenCoverageWeight    = 0.2
 	partialWeight          = 0.3
+	phraseConfidence       = 0.9
+	phraseExtraWordPenalty = 0.08
+	phraseFloor            = 0.55
 )
 
 type Resolver struct {
@@ -269,6 +272,10 @@ func courseBuilding(query string, words []string) (string, bool) {
 func fuzzy(e *entry, normalized string, words []string) float64 {
 	if len(normalized) >= 3 && strings.HasPrefix(e.normalized, normalized+" ") {
 		return prefixConfidence
+	}
+	if len(words) >= 2 && strings.Contains(" "+e.normalized+" ", " "+normalized+" ") {
+		extra := len(strings.Fields(e.normalized)) - len(words)
+		return max(phraseFloor, phraseConfidence-phraseExtraWordPenalty*float64(extra))
 	}
 	meaningful := withoutStopwords(words)
 	if len(meaningful) == 0 {
