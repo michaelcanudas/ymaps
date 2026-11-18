@@ -8,14 +8,7 @@ import { Coordinate, Leg, Route } from '../api/types';
 import { modeAppearance } from '../theme/modes';
 import { palette } from '../theme/palette';
 import { campusCenter, MapCanvasProps } from './mapProps';
-import {
-  destinationImageId,
-  dropoffImageId,
-  headingImageId,
-  pickupImageId,
-  registerMarkerImages,
-  vehicleImageId,
-} from './markerImages';
+import { destinationImageId, dropoffImageId, registerMarkerImages, vehicleImageId } from './markerImages';
 import { firstLabelLayerId, navyStyle } from './navyStyle';
 
 const emptyCollection: FeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -45,6 +38,29 @@ function legPath(leg: Leg): [number, number][] {
   ];
 }
 
+const vehicleScale = { bus: 1, shuttle: 0.85, bike: 0.9, veo: 0.85 } as const;
+
+function vehicle(coordinate: Coordinate, icon: string, scale: number): Feature {
+  return point(coordinate, { kind: 'vehicle', icon, scale });
+}
+
+function pathBearing(path: [number, number][], at: Coordinate) {
+  if (path.length < 2) return 0;
+  let nearest = 0;
+  let best = Infinity;
+  path.forEach(([lon, lat], i) => {
+    const distance = (lon - at.lon) ** 2 + (lat - at.lat) ** 2;
+    if (distance < best) {
+      best = distance;
+      nearest = i;
+    }
+  });
+  const [from, to] = nearest < path.length - 1 ? [path[nearest], path[nearest + 1]] : [path[nearest - 1], path[nearest]];
+  const dx = (to[0] - from[0]) * Math.cos((from[1] * Math.PI) / 180);
+  const dy = to[1] - from[1];
+  return ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
+}
+
 function transitLineCollection(route: Route | null) {
   if (!route) return emptyCollection;
   return collection(
@@ -69,26 +85,21 @@ function markerCollection(route: Route | null) {
     route.legs.flatMap((leg): Feature[] => {
       switch (leg.mode) {
         case 'shuttle':
-        case 'bus':
-          return leg.vehicle
-            ? [
-                point(leg.vehicle.coordinate, {
-                  icon: vehicleImageId(leg.mode),
-                  heading: headingImageId(leg.mode),
-                  hasHeading: leg.vehicle.heading !== undefined,
-                  headingDegrees: leg.vehicle.heading ?? 0,
-                }),
-              ]
-            : [];
+        case 'bus': {
+          if (!leg.vehicle) return [];
+          const heading =
+            leg.vehicle.heading ?? pathBearing(decodePolyline(leg.line.path), leg.vehicle.coordinate);
+          return [vehicle(leg.vehicle.coordinate, vehicleImageId(leg.mode, heading), vehicleScale[leg.mode])];
+        }
         case 'bike':
           return [
-            point(leg.from.coordinate, { icon: pickupImageId('bike'), hasHeading: false }),
-            point(leg.to.coordinate, { icon: dropoffImageId('bike'), hasHeading: false }),
+            vehicle(leg.from.coordinate, vehicleImageId('bike'), vehicleScale.bike),
+            point(leg.to.coordinate, { icon: dropoffImageId('bike') }),
           ];
         case 'veo':
           return [
-            point(leg.vehicle.coordinate, { icon: vehicleImageId('veo'), hasHeading: false }),
-            point(leg.to.coordinate, { icon: dropoffImageId('veo'), hasHeading: false }),
+            vehicle(leg.vehicle.coordinate, vehicleImageId('veo'), vehicleScale.veo),
+            point(leg.to.coordinate, { icon: dropoffImageId('veo') }),
           ];
         default:
           return [];
@@ -103,6 +114,7 @@ function endpointCollection(route: Route | null, pinnedOrigin: Coordinate | null
   }
   return collection([
     point(route.legs[0].from.coordinate, { kind: 'origin' }),
+    ...route.legs.slice(1).map((leg) => point(leg.from.coordinate, { kind: 'transfer' })),
     point(route.legs[route.legs.length - 1].to.coordinate, { kind: 'destination', icon: destinationImageId }),
   ]);
 }
@@ -157,22 +169,33 @@ function addOverlayLayers(map: MapLibreMap) {
   );
 
   map.addLayer({
-    id: 'marker-heading',
-    type: 'symbol',
-    source: 'markers',
-    filter: ['get', 'hasHeading'],
-    layout: {
-      'icon-image': ['get', 'heading'],
-      'icon-rotate': ['get', 'headingDegrees'],
-      'icon-rotation-alignment': 'map',
-      'icon-allow-overlap': true,
-    },
-  });
-  map.addLayer({
     id: 'markers',
     type: 'symbol',
     source: 'markers',
+    filter: ['!=', ['get', 'kind'], 'vehicle'],
     layout: { 'icon-image': ['get', 'icon'], 'icon-allow-overlap': true },
+  });
+  map.addLayer({
+    id: 'vehicles',
+    type: 'symbol',
+    source: 'markers',
+    filter: ['==', ['get', 'kind'], 'vehicle'],
+    layout: {
+      'icon-image': ['get', 'icon'],
+      'icon-size': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        13,
+        ['*', 0.45, ['get', 'scale']],
+        16,
+        ['*', 0.75, ['get', 'scale']],
+        18,
+        ['*', 1, ['get', 'scale']],
+      ],
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
   });
 
   map.addLayer({
@@ -187,6 +210,21 @@ function addOverlayLayers(map: MapLibreMap) {
       'circle-stroke-width': 3,
     },
   });
+  map.addLayer(
+    {
+      id: 'transfer',
+      type: 'circle',
+      source: 'endpoints',
+      filter: ['==', ['get', 'kind'], 'transfer'],
+      paint: {
+        'circle-radius': 4.5,
+        'circle-color': palette.ink,
+        'circle-stroke-color': palette.textPrimary,
+        'circle-stroke-width': 2.5,
+      },
+    },
+    'markers',
+  );
   map.addLayer({
     id: 'destination',
     type: 'symbol',

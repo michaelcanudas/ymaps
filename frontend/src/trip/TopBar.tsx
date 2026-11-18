@@ -1,17 +1,22 @@
 import { LayoutChangeEvent, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AvoidableMode } from '../api/types';
+import { Preferences } from '../state/usePreferences';
 import { Trip } from '../state/useTrip';
 import { fontFamily, palette, radius } from '../theme/palette';
+import { ModePicker } from './ModePicker';
 
 type TopBarProps = {
   trip: Trip;
+  preferences: Preferences;
+  onToggleMode: (mode: AvoidableMode) => void;
   isWide: boolean;
   onLayout: (event: LayoutChangeEvent) => void;
 };
 
-export function TopBar({ trip, isWide, onLayout }: TopBarProps) {
+export function TopBar({ trip, preferences, onToggleMode, isWide, onLayout }: TopBarProps) {
   return (
-    <View style={styles.bar} onLayout={onLayout}>
-      <View style={[styles.field, isWide && styles.fieldWide]}>
+    <View style={[styles.bar, isWide && styles.floating]} onLayout={onLayout}>
+      <View style={styles.field}>
         <View style={styles.marker} />
         <TextInput
           value={trip.destination}
@@ -31,6 +36,7 @@ export function TopBar({ trip, isWide, onLayout }: TopBarProps) {
           </Pressable>
         ) : null}
       </View>
+      <ModePicker preferences={preferences} onToggleMode={onToggleMode} />
     </View>
   );
 }
@@ -43,6 +49,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: palette.hairline,
   },
+  floating: {
+    width: 360,
+    marginTop: 16,
+    marginLeft: 16,
+    padding: 12,
+    borderRadius: radius.large,
+    borderWidth: 1,
+    borderColor: palette.hairline,
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+  },
   field: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -52,7 +71,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.medium,
     backgroundColor: palette.raised,
   },
-  fieldWide: { maxWidth: 420 },
   marker: { width: 8, height: 8, borderRadius: 1, backgroundColor: palette.textPrimary, marginRight: 12 },
   input: {
     flex: 1,

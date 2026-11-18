@@ -1,30 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { planRoute, refreshRoute } from '../api/client';
 import { Coordinate, Place, Route } from '../api/types';
+import { Preferences, routePreferences } from './usePreferences';
 
 export type RouteState =
   | { status: 'idle' }
   | { status: 'needsOrigin' }
   | { status: 'loading'; previous: Route | null }
   | { status: 'choosing'; places: Place[] }
-  | { status: 'ready'; route: Route }
+  | { status: 'ready'; options: Route[]; selected: number }
   | { status: 'error'; message: string };
 
-const refreshIntervalMs = 30000;
+const refreshIntervalMs = 60000;
 
 type Submission = { destination: string; placeId?: string };
 
-export function useTrip(currentLocation: Coordinate | null) {
+export function selectedRoute(state: RouteState) {
+  return state.status === 'ready' ? state.options[state.selected] : null;
+}
+
+export function useTrip(currentLocation: Coordinate | null, preferences: Preferences) {
   const [destination, setDestination] = useState('');
   const [pinnedOrigin, setPinnedOrigin] = useState<Coordinate | null>(null);
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [routeState, setRouteState] = useState<RouteState>({ status: 'idle' });
+  const [isLive, setIsLive] = useState(false);
   const latestRequestId = useRef(0);
   const currentLocationRef = useRef(currentLocation);
   currentLocationRef.current = currentLocation;
 
   const origin = pinnedOrigin ?? currentLocation;
   const hasOrigin = origin !== null;
+  const preferenceKey = JSON.stringify(routePreferences(preferences) ?? null);
 
   useEffect(() => {
     if (!submission) return;
@@ -34,15 +41,20 @@ export function useTrip(currentLocation: Coordinate | null) {
       return;
     }
     const requestId = ++latestRequestId.current;
-    setRouteState((current) => ({
-      status: 'loading',
-      previous: current.status === 'ready' ? current.route : null,
-    }));
-    planRoute({ origin: start, destination: submission.destination, placeId: submission.placeId })
+    const preferenceFields = JSON.parse(preferenceKey);
+    setIsLive(false);
+    setRouteState((current) => ({ status: 'loading', previous: selectedRoute(current) }));
+    planRoute({
+      origin: start,
+      destination: submission.destination,
+      placeId: submission.placeId,
+      ...(preferenceFields ? { preferences: preferenceFields } : {}),
+    })
       .then((result) => {
         if (requestId !== latestRequestId.current) return;
         if (result.kind === 'route') {
-          setRouteState({ status: 'ready', route: result.route });
+          const { alternatives = [], ...main } = result.route;
+          setRouteState({ status: 'ready', options: [main, ...alternatives], selected: 0 });
         } else if (result.unresolved.places.length > 0) {
           setRouteState({ status: 'choosing', places: result.unresolved.places });
         } else {
@@ -56,26 +68,44 @@ export function useTrip(currentLocation: Coordinate | null) {
           message: error instanceof Error ? error.message : 'No route right now',
         });
       });
-  }, [submission, pinnedOrigin, hasOrigin]);
+  }, [submission, pinnedOrigin, hasOrigin, preferenceKey]);
 
-  const readyRouteId = routeState.status === 'ready' ? routeState.route.id : null;
+  const liveRouteId = isLive ? selectedRoute(routeState)?.id ?? null : null;
+  const pinnedOriginRef = useRef(pinnedOrigin);
+  pinnedOriginRef.current = pinnedOrigin;
 
   useEffect(() => {
-    if (!readyRouteId || pinnedOrigin) return;
+    if (!liveRouteId) return;
     const timer = setInterval(() => {
-      const position = currentLocationRef.current;
+      const position = currentLocationRef.current ?? pinnedOriginRef.current;
       if (!position) return;
       const requestId = latestRequestId.current;
-      refreshRoute(readyRouteId, position)
+      refreshRoute(liveRouteId, position)
         .then((route) => {
           if (requestId !== latestRequestId.current) return;
-          if (route) setRouteState({ status: 'ready', route });
-          else setSubmission((current) => (current ? { ...current } : current));
+          if (!route) {
+            setSubmission((current) => (current ? { ...current } : current));
+            return;
+          }
+          setRouteState((current) => {
+            if (current.status !== 'ready') return current;
+            const options = current.options.map((option, index) => (index === current.selected ? route : option));
+            return { ...current, options };
+          });
         })
         .catch(() => undefined);
     }, refreshIntervalMs);
     return () => clearInterval(timer);
-  }, [readyRouteId, pinnedOrigin]);
+  }, [liveRouteId]);
+
+  const selectOption = useCallback((index: number) => {
+    setRouteState((current) =>
+      current.status === 'ready' && current.options[index] ? { ...current, selected: index } : current,
+    );
+  }, []);
+
+  const start = useCallback(() => setIsLive(true), []);
+  const end = useCallback(() => setIsLive(false), []);
 
   const submit = useCallback(() => {
     const text = destination.trim();
@@ -97,6 +127,7 @@ export function useTrip(currentLocation: Coordinate | null) {
     setDestination('');
     setSubmission(null);
     setPinnedOrigin(null);
+    setIsLive(false);
     setRouteState({ status: 'idle' });
   }, []);
 
@@ -104,12 +135,17 @@ export function useTrip(currentLocation: Coordinate | null) {
     destination,
     pinnedOrigin,
     routeState,
+    route: selectedRoute(routeState),
+    isLive,
     isWaitingForLocation: routeState.status === 'needsOrigin',
     editDestination,
     submit,
     choosePlace,
     pinOrigin: setPinnedOrigin,
     clearTrip,
+    selectOption,
+    start,
+    end,
   };
 }
 

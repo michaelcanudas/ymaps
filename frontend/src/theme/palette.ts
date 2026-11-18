@@ -24,7 +24,7 @@ export const palette = {
   danger: '#E58A8A',
 };
 
-export const radius = { small: 8, medium: 12, large: 16, pill: 999 };
+export const radius = { small: 8, medium: 12, large: 22, capsule: 999 };
 
 export const fontFamily =
   'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';

@@ -5,35 +5,29 @@ import { palette } from '../theme/palette';
 
 const pixelRatio = 2;
 
-const vehicleModes: Mode[] = ['shuttle', 'bus', 'bike', 'veo'];
+const headingStep = 10;
+const rotatingSprites = { shuttle: 'yale-shuttle', bus: 'ct-transit-bus' } as const;
+const staticSprites = { bike: 'ride-new-haven-bike', veo: 'veo-scooter' } as const;
+const dropoffModes: Mode[] = ['bike', 'veo'];
 
-export const vehicleImageId = (mode: Mode) => `vehicle-${mode}`;
-export const headingImageId = (mode: Mode) => `heading-${mode}`;
-export const pickupImageId = (mode: Mode) => `pickup-${mode}`;
+type RotatingMode = keyof typeof rotatingSprites;
+type StaticMode = keyof typeof staticSprites;
+
+const headings = Array.from({ length: 360 / headingStep }, (_, i) => i * headingStep);
+const pad = (heading: number) => String(heading).padStart(3, '0');
+
+function snapHeading(degrees: number) {
+  const normalized = ((degrees % 360) + 360) % 360;
+  return (Math.round(normalized / headingStep) * headingStep) % 360;
+}
+
+export function vehicleImageId(mode: RotatingMode, heading: number): string;
+export function vehicleImageId(mode: StaticMode): string;
+export function vehicleImageId(mode: RotatingMode | StaticMode, heading = 0) {
+  return mode in rotatingSprites ? `vehicle-${mode}-${pad(snapHeading(heading))}` : `vehicle-${mode}`;
+}
 export const dropoffImageId = (mode: Mode) => `dropoff-${mode}`;
 export const destinationImageId = 'endpoint-destination';
-
-function vehicleSvg(mode: Mode) {
-  const { color, glyph } = modeAppearance[mode];
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
-    <circle cx="11" cy="11" r="10" fill="${palette.ink}" stroke="${color}" stroke-opacity="0.85" stroke-width="1.2"/>
-    <g transform="translate(4.4 4.4) scale(0.55)"><path d="${glyph}" fill="${color}"/></g>
-  </svg>`;
-}
-
-function headingSvg(mode: Mode) {
-  const { color } = modeAppearance[mode];
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
-    <path d="M15 1.5 L19 7 L11 7 Z" fill="${color}" fill-opacity="0.9"/>
-  </svg>`;
-}
-
-function pickupSvg(mode: Mode) {
-  const { color } = modeAppearance[mode];
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">
-    <rect x="1" y="1" width="10" height="10" rx="3" fill="${color}" fill-opacity="0.8" stroke="${palette.ink}" stroke-width="1.2"/>
-  </svg>`;
-}
 
 function dropoffSvg(mode: Mode) {
   const { color } = modeAppearance[mode];
@@ -67,14 +61,23 @@ async function addSvgImage(map: MapLibreMap, id: string, svg: string) {
   if (!map.hasImage(id)) map.addImage(id, image, { pixelRatio });
 }
 
+async function addPngImage(map: MapLibreMap, id: string, url: string) {
+  if (map.hasImage(id)) return;
+  const { data } = await map.loadImage(url);
+  if (!map.hasImage(id)) map.addImage(id, data, { pixelRatio });
+}
+
 export async function registerMarkerImages(map: MapLibreMap) {
   await Promise.all([
-    ...vehicleModes.flatMap((mode) => [
-      addSvgImage(map, vehicleImageId(mode), vehicleSvg(mode)),
-      addSvgImage(map, headingImageId(mode), headingSvg(mode)),
-      addSvgImage(map, pickupImageId(mode), pickupSvg(mode)),
-      addSvgImage(map, dropoffImageId(mode), dropoffSvg(mode)),
-    ]),
+    ...(Object.entries(rotatingSprites) as [RotatingMode, string][]).flatMap(([mode, slug]) =>
+      headings.map((heading) =>
+        addPngImage(map, vehicleImageId(mode, heading), `/vehicles/${slug}/${slug}_${pad(heading)}.png`),
+      ),
+    ),
+    ...(Object.entries(staticSprites) as [StaticMode, string][]).map(([mode, slug]) =>
+      addPngImage(map, vehicleImageId(mode), `/vehicles/${slug}/${slug}.png`),
+    ),
+    ...dropoffModes.map((mode) => addSvgImage(map, dropoffImageId(mode), dropoffSvg(mode))),
     addSvgImage(map, destinationImageId, destinationSvg),
   ]);
 }

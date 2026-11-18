@@ -11,10 +11,19 @@ export type Place = {
   source: 'alias' | 'yale' | 'google';
 };
 
+export type AvoidableMode = Exclude<Mode, 'walk'>;
+
+export type RoutePreferences = {
+  maxWalkMinutes?: number;
+  maxCostCents?: number;
+  avoidModes?: AvoidableMode[];
+};
+
 export type RouteRequest = {
   origin: Coordinate;
   destination: string;
   placeId?: string;
+  preferences?: RoutePreferences;
 };
 
 export type Unresolved = { destination: string; places: Place[] };
@@ -30,7 +39,6 @@ type LegBase = {
   to: Point;
   departAt: string;
   arriveAt: string;
-  arriveAtLate: string;
   costCents: number;
   path: string;
 };
@@ -60,15 +68,23 @@ export type Leg = WalkLeg | ShuttleLeg | BusLeg | BikeLeg | VeoLeg;
 
 export type Mode = Leg['mode'];
 
+export const allModes: Mode[] = ['walk', 'shuttle', 'bus', 'bike', 'veo'];
+
+export const avoidableModes: AvoidableMode[] = ['shuttle', 'bus', 'bike', 'veo'];
+
+export type AlternativeKind = 'free' | 'faster' | 'lessWalking' | 'cheaper';
+
 export type Route = {
   id: string;
   place: Place;
   computedAt: string;
   departAt: string;
   arriveAt: string;
-  arriveAtLate: string;
   costCents: number;
   legs: Leg[];
+  label?: string;
+  kind?: AlternativeKind;
+  alternatives?: Route[];
 };
 
 export type HelloResponse = { message: 'hello' };
