@@ -6,6 +6,15 @@ Two people build it in this repo. Michael owns `backend/`. Walter owns `frontend
 
 ![Brand and visual direction](<Screenshot 2026-11-17 190945.png>)
 
+## Demo
+
+- [Web app](media/web-demo.mp4)
+- [iOS app](media/ios-demo.mp4)
+
+<video src="media/web-demo.mp4" controls muted width="720"></video>
+
+<video src="media/ios-demo.mp4" controls muted width="320"></video>
+
 ## Start here
 
 1. [AGENTS.md](AGENTS.md) if you are an agent
