@@ -9,6 +9,13 @@ struct RootView: View {
     @State private var shuttles = LiveShuttles()
     #endif
 
+    static let world = [
+        CLLocationCoordinate2D(latitude: 85, longitude: -179.9),
+        CLLocationCoordinate2D(latitude: 85, longitude: 179.9),
+        CLLocationCoordinate2D(latitude: -85, longitude: 179.9),
+        CLLocationCoordinate2D(latitude: -85, longitude: -179.9),
+    ]
+
     static let campus = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 41.3105, longitude: -72.9260),
         span: MKCoordinateSpan(latitudeDelta: 0.018, longitudeDelta: 0.018)
@@ -23,7 +30,7 @@ struct RootView: View {
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
             }
-            .background(.black)
+            .background(Brand.mapBackground)
             #if LIVE_SHUTTLES
             .task { await shuttles.run() }
             #endif
@@ -35,6 +42,9 @@ struct RootView: View {
 
     private var map: some View {
         Map(position: $camera) {
+            MapPolygon(coordinates: RootView.world)
+                .foregroundStyle(Brand.mapBackground.opacity(0.5))
+                .mapOverlayLevel(level: .aboveRoads)
             UserAnnotation()
             #if LIVE_SHUTTLES
             ForEach(shuttles.buses) { bus in
@@ -55,6 +65,10 @@ struct RootView: View {
                         MapPolyline(coordinates: Polyline.decode(line.path))
                             .stroke(Color(hex: line.color).opacity(0.25), lineWidth: 3)
                     }
+                    if leg.isRide, Polyline.decode(leg.path).count > 1 {
+                        MapPolyline(coordinates: Polyline.decode(leg.path))
+                            .stroke(Brand.ink.opacity(0.9), style: StrokeStyle(lineWidth: 9, lineCap: .round, lineJoin: .round))
+                    }
                     if Polyline.decode(leg.path).count > 1 {
                         MapPolyline(coordinates: Polyline.decode(leg.path))
                             .stroke(RootView.color(for: leg), style: RootView.stroke(for: leg))
@@ -63,16 +77,27 @@ struct RootView: View {
                 ForEach(Array(route.legs.dropFirst().enumerated()), id: \.offset) { _, leg in
                     Annotation("", coordinate: leg.from.coordinate.location) {
                         Circle()
-                            .fill(.black)
-                            .stroke(.white, lineWidth: 3)
-                            .frame(width: 12, height: 12)
+                            .fill(Brand.ink)
+                            .stroke(Brand.textPrimary, lineWidth: 2.5)
+                            .frame(width: 11, height: 11)
+                    }
+                }
+                ForEach(Array(route.legs.enumerated()), id: \.offset) { _, leg in
+                    if let marker = RootView.vehicleMarker(for: leg) {
+                        Annotation("", coordinate: marker.coordinate, anchor: .center) {
+                            Image(marker.sprite)
+                                .resizable()
+                                .interpolation(.high)
+                                .frame(width: VehicleSprite.size(for: leg.mode), height: VehicleSprite.size(for: leg.mode))
+                        }
                     }
                 }
                 if let last = route.legs.last {
                     Annotation("", coordinate: last.to.coordinate.location) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(.white)
-                            .frame(width: 14, height: 14)
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Brand.textPrimary)
+                            .frame(width: 16, height: 16)
+                            .overlay(Rectangle().fill(Brand.ink).frame(width: 6, height: 6))
                     }
                 }
             }
@@ -83,22 +108,31 @@ struct RootView: View {
     }
 
     static func color(for leg: Leg) -> Color {
+        Brand.color(forMode: leg.mode)
+    }
+
+    static func vehicleMarker(for leg: Leg) -> (coordinate: CLLocationCoordinate2D, sprite: String)? {
         switch leg.mode {
-        case "walk": .white.opacity(0.75)
-        case "bike": Color(hex: "34C759")
-        case "veo": Color(hex: "AF52DE")
-        default: leg.line.map { Color(hex: $0.color) } ?? .white
+        case "shuttle", "bus":
+            guard let vehicle = leg.vehicle else { return nil }
+            let heading = vehicle.heading.map(Double.init) ?? leg.line.map {
+                VehicleSprite.bearing(along: Polyline.decode($0.path), at: vehicle.coordinate.location)
+            }
+            guard let sprite = VehicleSprite.name(for: leg.mode, heading: heading) else { return nil }
+            return (vehicle.coordinate.location, sprite)
+        case "bike":
+            guard let sprite = VehicleSprite.name(for: leg.mode, heading: nil) else { return nil }
+            return (leg.from.coordinate.location, sprite)
+        case "veo":
+            guard let vehicle = leg.vehicle, let sprite = VehicleSprite.name(for: leg.mode, heading: nil) else { return nil }
+            return (vehicle.coordinate.location, sprite)
+        default:
+            return nil
         }
     }
 
     static func ink(for leg: Leg) -> Color {
-        let hex: String
-        switch leg.mode {
-        case "bike": hex = "34C759"
-        case "veo": hex = "AF52DE"
-        default: hex = leg.line?.color ?? "FFFFFF"
-        }
-        return Color.luminance(hex) > 0.5 ? .black : .white
+        Brand.ink
     }
 
     static func stroke(for leg: Leg) -> StrokeStyle {
@@ -137,7 +171,7 @@ struct TripPanel: View {
 
     var body: some View {
         content
-            .foregroundStyle(.white)
+            .foregroundStyle(Brand.textPrimary)
             .animation(.snappy, value: phaseKey)
             .animation(.snappy, value: searching)
             .onChange(of: phaseKey) { _, key in
@@ -159,7 +193,7 @@ struct TripPanel: View {
                 HStack {
                     Text(destination).font(.headline).lineLimit(1)
                     Spacer()
-                    ProgressView().tint(.white)
+                    ProgressView().tint(Brand.textPrimary)
                 }
             }
         case .failed(let message):
@@ -167,7 +201,7 @@ struct TripPanel: View {
                 Text(message)
                     .font(.subheadline)
                     .lineLimit(2)
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(Brand.textSecondary)
                     .padding(.horizontal, 8)
                 searchBar
             }
@@ -192,14 +226,15 @@ struct TripPanel: View {
         content()
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.black, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .background(Brand.panel.opacity(0.97), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Brand.hairline, lineWidth: 1))
     }
 
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.white.opacity(0.5))
-            TextField("", text: $query, prompt: Text("Where to?").foregroundStyle(.white.opacity(0.5)))
+                .foregroundStyle(Brand.textSecondary)
+            TextField("", text: $query, prompt: Text("Where to?").foregroundStyle(Brand.textSecondary))
                 .font(.body.weight(.medium))
                 .focused($searching)
                 .submitLabel(.go)
@@ -213,7 +248,7 @@ struct TripPanel: View {
                     query = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(Brand.textFaint)
                 }
                 .buttonStyle(.plain)
             }
@@ -223,14 +258,15 @@ struct TripPanel: View {
                     query = ""
                 }
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(Brand.textSecondary)
                 .buttonStyle(.plain)
                 .transition(.opacity)
             }
         }
         .padding(.horizontal, 18)
         .frame(height: 56)
-        .background(.black, in: Capsule())
+        .background(Brand.panel.opacity(0.97), in: Capsule())
+        .overlay(Capsule().stroke(Brand.hairline, lineWidth: 1))
     }
 
     private func choices(_ destination: String, _ places: [Place]) -> some View {
@@ -250,7 +286,7 @@ struct TripPanel: View {
                         if let address = place.address {
                             Text(address)
                                 .font(.caption)
-                                .foregroundStyle(.white.opacity(0.5))
+                                .foregroundStyle(Brand.textSecondary)
                                 .lineLimit(1)
                         }
                     }
@@ -288,7 +324,7 @@ struct RouteCard: View {
                     .font(.subheadline)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(Brand.textSecondary)
             }
             LegStrip(legs: route.legs)
             if !trip.isLive && options.count > 1 {
@@ -305,8 +341,9 @@ struct RouteCard: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(trip.isLive ? Color.white.opacity(0.12) : .white, in: Capsule())
-                    .foregroundStyle(trip.isLive ? .white : .black)
+                    .background(trip.isLive ? Brand.raised : Brand.textPrimary, in: Capsule())
+                    .overlay(Capsule().stroke(trip.isLive ? Brand.hairline : .clear, lineWidth: 1))
+                    .foregroundStyle(trip.isLive ? Brand.textPrimary : Brand.ink)
             }
             .buttonStyle(.plain)
         }
@@ -341,14 +378,14 @@ struct OptionRow: View {
                     .font(.subheadline.monospacedDigit())
                     .lineLimit(1)
                     .fixedSize()
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(Brand.textSecondary)
             }
             .padding(.vertical, 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .overlay(alignment: .top) {
-            Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
+            Rectangle().fill(Brand.hairline).frame(height: 1)
         }
     }
 }
@@ -373,7 +410,7 @@ struct LegStrip: View {
                 if index > 0 {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white.opacity(0.3))
+                        .foregroundStyle(Brand.textFaint)
                 }
                 chip(for: leg, name: names, minutes: minutes)
             }
@@ -399,7 +436,7 @@ struct LegStrip: View {
         .padding(.horizontal, leg.isRide ? 10 : 2)
         .padding(.vertical, 6)
         .background(leg.isRide ? RootView.color(for: leg).opacity(0.9) : .clear, in: Capsule())
-        .foregroundStyle(leg.isRide ? RootView.ink(for: leg) : .white.opacity(0.8))
+        .foregroundStyle(leg.isRide ? RootView.ink(for: leg) : Brand.textPrimary)
     }
 
     static func shortName(_ name: String) -> String {
@@ -430,7 +467,7 @@ struct CloseButton: View {
             Image(systemName: "xmark")
                 .font(.footnote.weight(.bold))
                 .frame(width: 30, height: 30)
-                .background(.white.opacity(0.12), in: Circle())
+                .background(Brand.raised, in: Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Close")
